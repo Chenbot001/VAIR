@@ -1,4 +1,5 @@
-2025-06-13 00:06:52,375 - INFO - System is Windows
-2025-06-13 00:07:08,772 - INFO - Raw Measurement FPS is: 45.27
-2025-06-13 00:07:08,773 - INFO - Sensor reset!!!!!!!!!!!!!!!!!!
-2025-06-13 00:07:08,774 - INFO - SDK Version: 0.1.0
+2025-06-24 00:43:58,562 - INFO - System is Windows
+2025-06-24 00:44:15,875 - INFO - Raw Measurement FPS is: 47.45
+2025-06-24 00:44:15,876 - INFO - Sensor reset!!!!!!!!!!!!!!!!!!
+2025-06-24 00:44:15,877 - INFO - SDK Version: 0.1.0
+2025-06-24 00:48:59,052 - ERROR - Failed to read a frame from the video source. Please check the video source connection.

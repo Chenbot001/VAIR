@@ -7,8 +7,9 @@ import os
 import numpy as np
 import msvcrt  # Import msvcrt for keyboard input
 
+# Add paths before imports
 sys.path.append(os.path.abspath('../damiao/DM_Control'))
-sys.path.insert(0, os.path.abspath('../DM-Tac'))  # Prepend DM-Tac folder to Python path
+sys.path.insert(0, os.path.abspath('../daimon'))  # Prepend DM-Tac folder to Python path
 
 from DM_CAN import MotorControl, Motor as GripperMotor, DM_Motor_Type, Control_Type
 from dmrobotics import Sensor
@@ -109,7 +110,7 @@ try:
         sensor_feedback = control_gripper(state)
         # Get gripper position in degrees
         gripper_pos = gripper_motor.getPosition()
-        print(f"\rGripper State: {state} | Gripper Position: {gripper_pos:.2f} | Max Intensity: {sensor_feedback:.2f}", end="")
+        print(f"\rTrigger Angle: {trigger_angle:.2f} | Gripper State: {state} | Gripper Position: {gripper_pos:.2f} | Max Intensity: {sensor_feedback:.2f}", end="")
 
         #time.sleep(0.01)
 except KeyboardInterrupt:

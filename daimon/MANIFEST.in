@@ -1,0 +1,2 @@
+# Include all .so files from dmrobotics and its subdirectories
+recursive-include dmrobotics *.so

@@ -109,11 +109,11 @@ PORT_CONFIG_MAP: Dict[str, DynamixelRobotConfig] = {
         joint_ids=(1, 2, 3, 4, 5, 6),  # Your motor IDs: 1-6 for arm, 7 for gripper
         joint_offsets=(
             4 * np.pi / 2,  # Offset for joint 1
-            4 * np.pi / 2,  # Offset for joint 2
+            3 * np.pi / 2,  # Offset for joint 2
             2 * np.pi / 2,  # Offset for joint 3
-            4 * np.pi / 2,  # Offset for joint 4
-            4 * np.pi / 2,  # Offset for joint 5
-            4 * np.pi / 2  # Offset for joint 6
+            3 * np.pi / 2,  # Offset for joint 4
+            2 * np.pi / 2,  # Offset for joint 5
+            3 * np.pi / 2  # Offset for joint 6
         ),
         joint_signs=(1, 1, -1, 1, 1, 1),
                                             

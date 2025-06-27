@@ -8,6 +8,7 @@ import time
 # Your last script used 'COM7', so I have set it here. Please verify this.
 SERIAL_PORT = 'COM7' 
 BAUD_RATE = 115200
+MICROSTEPS = 16  # Fixed microstepping factor
 
 def get_user_input():
     """Gets and validates user input for a motor command."""
@@ -16,12 +17,23 @@ def get_user_input():
             m1_pos = int(input("  Enter Motor 1 Target Position (full steps): "))
             m2_pos = int(input("  Enter Motor 2 Target Position (full steps): "))
             freq = int(input("  Enter Frequency (full steps/sec, e.g., 1000): "))
-            microsteps = int(input("  Enter Microstep Factor (e.g., 16): "))
-            return m1_pos, m2_pos, freq, microsteps
+            return m1_pos, m2_pos, freq
         except ValueError:
             print("Invalid input. Please enter integers only.")
         except KeyboardInterrupt:
             raise # Re-raise the exception to be caught by the main loop's handler
+
+def send_motor_command(controller, m1_pos, m2_pos, freq):
+    """Send a motor command and wait for completion."""
+    command = f"<{m1_pos},{m2_pos},{freq},{MICROSTEPS}>\n"
+    print(f"Sending command: {command.strip()}")
+    
+    # Send the command to the Arduino
+    controller.write(command.encode('utf-8'))
+    
+    # Wait for the "Move complete" confirmation and print the response
+    response = controller.read_until(b'Move complete. Motors disabled.\n').decode('utf-8', errors='ignore')
+    print(f"Arduino response: {response.strip()}\n")
 
 def main_controller():
     """Main function to run the interactive controller."""
@@ -49,21 +61,16 @@ def main_controller():
         print(homing_response.strip())
         print("------------------------------\n")
         
-        # --- 2. Main Command Loop ---
+        # --- 2. Initialization Step ---
+        print("Performing initialization: moving both motors to position 500 at 500Hz...")
+        send_motor_command(uno, 500, 500, 500)
+        print("Initialization complete.\n")
+        
+        # --- 3. Main Command Loop ---
         while True:
             print("Enter new motor targets (or Ctrl + C to quit):")
-            m1, m2, hz, ms = get_user_input()
-
-            # Format the command string
-            command = f"<{m1},{m2},{hz},{ms}>\n"
-            print(f"Sending command: {command.strip()}")
-
-            # Send the command to the Arduino
-            uno.write(command.encode('utf-8'))
-
-            # Wait for the "Move complete" confirmation and print the response
-            response = uno.read_until(b'Move complete. Motors disabled.\n').decode('utf-8', errors='ignore')
-            print(f"Arduino response: {response.strip()}\n")
+            m1, m2, hz = get_user_input()
+            send_motor_command(uno, m1, m2, hz)
 
     except serial.SerialException as e:
         print(f"\nError: Could not open or read from serial port {SERIAL_PORT}.")
@@ -71,10 +78,18 @@ def main_controller():
     except KeyboardInterrupt:
         print("\nProgram stopped by user.")
     finally:
-        # Ensure the serial port is closed when the program ends
+        # --- 4. Reset Step ---
         if uno and uno.is_open:
-            uno.close()
-            print("Serial port closed.")
+            try:
+                print("Performing reset: moving both motors back to position 0...")
+                send_motor_command(uno, 0, 0, 500)
+                print("Reset complete.")
+            except Exception as e:
+                print(f"Error during reset: {e}")
+            finally:
+                # Ensure the serial port is closed when the program ends
+                uno.close()
+                print("Serial port closed.")
 
 if __name__ == "__main__":
     main_controller()

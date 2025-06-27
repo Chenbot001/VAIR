@@ -1,21 +1,25 @@
-// --- Pin Definitions for Your Specific STM32 Wiring ---
-#define SLEEP1  PC12 // Motor 1 Enable (EN1)
-#define DIR1    PB8  // Motor 1 Direction
-#define STEP1   PC9  // Motor 1 Step
+// --- Pin Definitions ---
+#define SLEEP1  PC12
+#define DIR1    PB8
+#define STEP1   PC9
 
-#define SLEEP2  PD2  // Motor 2 Enable (EN2)
-#define DIR2    PB9  // Motor 2 Direction
-#define STEP2   PC8  // Motor 2 Step
+#define SLEEP2  PD2
+#define DIR2    PB9
+#define STEP2   PC8
 
-// --- Global Position Tracking Variables ---
-// These are important to maintain the state of the motors between commands.
+// --- Motor & Homing Configuration Constants ---
+#define MICROSTEP_FACTOR      16
+#define FULL_TRAVEL_STEPS     1000
+#define FULL_TRAVEL_MICROSTEPS (FULL_TRAVEL_STEPS * MICROSTEP_FACTOR) // 16000
+#define HOMING_FREQUENCY_HZ   8000 // Speed in microsteps/sec for homing
+
+// --- Global Position Tracking ---
 long motor1_position = 0;
 long motor2_position = 0;
 
 void setup() {
   Serial.begin(115200);
   
-  // Configure all motor pins as outputs
   pinMode(SLEEP1, OUTPUT);
   pinMode(DIR1, OUTPUT);
   pinMode(STEP1, OUTPUT);
@@ -23,73 +27,76 @@ void setup() {
   pinMode(DIR2, OUTPUT);
   pinMode(STEP2, OUTPUT);
 
-  // --- Start with motors explicitly disabled for safety ---
+  // Now, wait for the user to initiate homing
+  Serial.println("--- STM32 Ready. Send <HOME> to begin homing sequence. ---");
+  
+  String command = "";
+  while(command != "<HOME>") {
+    if (Serial.available() > 0) {
+      command = Serial.readStringUntil('\n');
+      command.trim();
+    }
+  }
+
+  // --- Homing Sequence at Startup ---
+  Serial.println("--- Starting Homing Sequence ---");-
+  
+  // Enable motors for homing
+  digitalWrite(SLEEP1, HIGH);
+  digitalWrite(SLEEP2, HIGH);
+  delay(10);
+
+  // 1. Fully extend both motors
+  Serial.println("Extending motors to full travel...");
+  moveToTarget(FULL_TRAVEL_MICROSTEPS, FULL_TRAVEL_MICROSTEPS, HOMING_FREQUENCY_HZ);
+  delay(500);
+
+  // 2. Retract both motors to the zero position
+  Serial.println("Retracting motors to zero position...");
+  moveToTarget(0, 0, HOMING_FREQUENCY_HZ);
+  delay(100);
+
+  // Homing complete, disable motors and wait for commands
   digitalWrite(SLEEP1, LOW);
   digitalWrite(SLEEP2, LOW);
-
-  Serial.println("--- Gripper Control Ready ---");
-  Serial.println("Send commands in format: <M1_pos,M2_pos,freq,microsteps>");
-  Serial.println("Example: <500,500,1320,16>");
+  
+  Serial.println("--- Homing Complete. Ready for Commands ---");
+  Serial.println("Send commands in format: <M1_pos,M2_pos,freq_fullstep,microsteps>");
 }
 
 void loop() {
-  // Check if there is a complete command available from the serial port
   if (Serial.available() > 0) {
     String command = Serial.readStringUntil('\n');
     command.trim();
 
-    // --- Command Parsing Logic ---
     if (command.startsWith("<") && command.endsWith(">")) {
-      // Remove the start and end markers
-      command = command.substring(1, command.length() - 1);
+      String content = command.substring(1, command.length() - 1);
       
-      // Variables to hold parsed values
       long target_m1, target_m2;
       float freq;
       int microsteps;
 
-      // Find the comma delimiters
-      int comma1 = command.indexOf(',');
-      int comma2 = command.indexOf(',', comma1 + 1);
-      int comma3 = command.indexOf(',', comma2 + 1);
+      int parsed_items = sscanf(content.c_str(), "%ld,%ld,%f,%d", &target_m1, &target_m2, &freq, &microsteps);
 
-      // Ensure all four parts are present
-      if (comma1 > 0 && comma2 > 0 && comma3 > 0) {
-        String m1_str = command.substring(0, comma1);
-        String m2_str = command.substring(comma1 + 1, comma2);
-        String freq_str = command.substring(comma2 + 1, comma3);
-        String micro_str = command.substring(comma3 + 1);
-
-        // Convert string parts to numbers
-        target_m1 = m1_str.toInt();
-        target_m2 = m2_str.toInt();
-        freq = freq_str.toFloat();
-        microsteps = micro_str.toInt();
-
-        // --- Execute the Command ---
-        Serial.print("Received Command: Move M1 to ");
-        Serial.print(target_m1);
-        Serial.print(", M2 to ");
-        Serial.print(target_m2);
-        Serial.print(" at ");
-        Serial.print(freq);
-        Serial.print(" Hz with 1/");
-        Serial.print(microsteps);
-        Serial.println(" microstepping.");
-
-        // Enable motors only for the duration of the move
+      if (parsed_items == 4) {
         digitalWrite(SLEEP1, HIGH);
         digitalWrite(SLEEP2, HIGH);
-        delay(10); // Small delay for drivers to power up
+        delay(10);
 
-        // Call the move function with the calculated target positions
-        moveToTarget(target_m1 * microsteps, target_m2 * microsteps, freq);
+        // --- REVERTED: STM32 now handles microstep scaling ---
+        // The 'freq' variable is from Python (full steps/sec). We scale it here.
+        float frequency_in_microsteps = freq * microsteps;
+        
+        long m1_target_microsteps = target_m1 * microsteps;
+        long m2_target_microsteps = target_m2 * microsteps;
 
-        // Disable motors immediately after the move for safety
+        moveToTarget(m1_target_microsteps, m2_target_microsteps, frequency_in_microsteps);
+
         digitalWrite(SLEEP1, LOW);
         digitalWrite(SLEEP2, LOW);
         
         Serial.println("Move complete. Motors disabled.");
+        
       } else {
         Serial.println("Error: Invalid command format.");
       }
@@ -98,10 +105,11 @@ void loop() {
 }
 
 /**
- * @brief Moves both motors simultaneously to their target positions.
- * This function is UNCHANGED from your previous version.
+ * @brief Moves both motors simultaneously to their target positions in microsteps.
+ * (This function is unchanged)
  */
 void moveToTarget(long m1_target_pos, long m2_target_pos, float frequency_hz) {
+  // ... (Function content is the same as previous versions)
   if (frequency_hz <= 0) {
     return; 
   }
@@ -114,9 +122,10 @@ void moveToTarget(long m1_target_pos, long m2_target_pos, float frequency_hz) {
   unsigned long m2_last_step = 0;
 
   while (motor1_position != m1_target_pos || motor2_position != m2_target_pos) {
+    unsigned long now = micros();
     if (motor1_position != m1_target_pos) {
-      if (micros() - m1_last_step >= step_delay_us) {
-        m1_last_step = micros();
+      if (now - m1_last_step >= step_delay_us) {
+        m1_last_step = now;
         digitalWrite(STEP1, HIGH);
         delayMicroseconds(5);
         digitalWrite(STEP1, LOW);
@@ -124,8 +133,8 @@ void moveToTarget(long m1_target_pos, long m2_target_pos, float frequency_hz) {
       }
     }
     if (motor2_position != m2_target_pos) {
-      if (micros() - m2_last_step >= step_delay_us) {
-        m2_last_step = micros();
+      if (now - m2_last_step >= step_delay_us) {
+        m2_last_step = now;
         digitalWrite(STEP2, HIGH);
         delayMicroseconds(5);
         digitalWrite(STEP2, LOW);

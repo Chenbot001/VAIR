@@ -1,95 +1,163 @@
-# File: stepper_control.py
+# File: interactive_control.py
 
 import serial
 import time
+import os
+import threading
+from pynput import keyboard
 
 # --- Configuration ---
-# Set to the COM port of your Arduino UNO.
-# Your last script used 'COM7', so I have set it here. Please verify this.
-SERIAL_PORT = 'COM7' 
-BAUD_RATE = 115200
-MICROSTEPS = 16  # Fixed microstepping factor
+CONFIG = {
+    "port": "COM8",
+    "baud_rate": 115200,
+    "microsteps": 16,
+    "max_steps": 1000,
+    "initial_pos": 500,
+    "initial_speed": 100,
+}
 
-def get_user_input():
-    """Gets and validates user input for a motor command."""
-    while True:
+# --- State Tracking ---
+class MotorState:
+    """A class to hold the live state of the motor controller."""
+    def __init__(self):
+        # Target state that we will command
+        self.m1_target_pos = CONFIG["initial_pos"]
+        self.m2_target_pos = CONFIG["initial_pos"]
+        self.speed = CONFIG["initial_speed"]
+        self.step_size = 50  # How many steps to move per key press
+
+        # Last known message from Arduino
+        self.last_arduino_msg = ""
+        self.running = True
+
+# Global state object
+state = MotorState()
+
+# --- Serial Communication ---
+# This runs in a separate thread to avoid blocking the main UI
+def serial_reader(ser, state):
+    """Continuously reads from the serial port in the background."""
+    while state.running:
         try:
-            m1_pos = int(input("  Enter Motor 1 Target Position (full steps): "))
-            m2_pos = int(input("  Enter Motor 2 Target Position (full steps): "))
-            freq = int(input("  Enter Frequency (full steps/sec, e.g., 1000): "))
-            return m1_pos, m2_pos, freq
-        except ValueError:
-            print("Invalid input. Please enter integers only.")
-        except KeyboardInterrupt:
-            raise # Re-raise the exception to be caught by the main loop's handler
+            if ser.in_waiting > 0:
+                response = ser.readline().decode('utf-8', errors='ignore').strip()
+                if response:
+                    state.last_arduino_msg = response
+        except serial.SerialException:
+            state.last_arduino_msg = "ERR: Serial port disconnected."
+            break
+        time.sleep(0.05)
 
-def send_motor_command(controller, m1_pos, m2_pos, freq):
-    """Send a motor command and wait for completion."""
-    command = f"<{m1_pos},{m2_pos},{freq},{MICROSTEPS}>\n"
-    print(f"Sending command: {command.strip()}")
-    
-    # Send the command to the Arduino
-    controller.write(command.encode('utf-8'))
-    
-    # Wait for the "Move complete" confirmation and print the response
-    response = controller.read_until(b'Move complete. Motors disabled.\n').decode('utf-8', errors='ignore')
-    print(f"Arduino response: {response.strip()}\n")
+def send_command(ser, command):
+    """Sends a command to the Arduino."""
+    ser.write(command.encode('utf-8'))
 
-def main_controller():
-    """Main function to run the interactive controller."""
-    # The 'uno' variable will hold our serial connection
-    uno = None 
+def send_move_command(ser, m1, m2, speed):
+    """Constructs and sends a standard motor move command."""
+    # Clamp position to physical limits as a safety measure
+    m1 = max(0, min(m1, CONFIG["max_steps"]))
+    m2 = max(0, min(m2, CONFIG["max_steps"]))
+    command = f"<{int(m1)},{int(m2)},{int(speed)},{CONFIG['microsteps']}>\n"
+    send_command(ser, command)
+    # Update the state's target position
+    state.m1_target_pos = m1
+    state.m2_target_pos = m2
+
+# --- UI / Dashboard ---
+def update_display():
+    """Clears the screen and draws the dashboard."""
+    os.system('cls' if os.name == 'nt' else 'clear')
+    print("--- Live Motor Controller ---")
+    print(f"  Target Position: M1={state.m1_target_pos:<4} | M2={state.m2_target_pos:<4}")
+    print(f"  Speed (steps/s): {state.speed:<4}   | Step Size: {state.step_size:<4}")
+    print("-" * 30)
+    print("  [A/D] Rotate | [W/S] Speed | [Q/E] Step Size")
+    print("  [SPACE] STOP | [R] Reset Pos | [ESC] Quit")
+    print("-" * 30)
+    print(f"Arduino -> {state.last_arduino_msg}")
+
+
+# --- Keyboard Input Handling ---
+def on_press(key):
+    """Handles key press events."""
     try:
-        # Connect to the serial port with a 20-second timeout for the homing sequence
-        uno = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=20)
-        print(f"Connected to Arduino on {SERIAL_PORT} at {BAUD_RATE} baud.")
-
-        # --- 1. Automated Homing Handshake ---
-        print("\nWaiting for Arduino to be ready for homing...")
-        # Wait for the "Ready" message from the Arduino's setup() function
-        initial_message = uno.read_until(b'begin homing sequence.\n').decode('utf-8', errors='ignore')
-        print(f"Arduino says: {initial_message.strip()}")
-
-        # Send the <HOME> command to start the sequence
-        print("Sending <HOME> command to start homing...")
-        uno.write(b'<HOME>\n')
-
-        # Wait for the entire homing sequence to finish
-        print("Homing in progress... (This may take a moment)")
-        homing_response = uno.read_until(b'Ready for motion commands.\n').decode('utf-8', errors='ignore')
-        print("--- Homing Sequence Output ---")
-        print(homing_response.strip())
-        print("------------------------------\n")
+        # --- Rotational Movement ---
+        if key.char == 'd':  # Rotate right
+            new_m1 = state.m1_target_pos + state.step_size
+            new_m2 = state.m2_target_pos - state.step_size
+            send_move_command(ser, new_m1, new_m2, state.speed)
+        elif key.char == 'a':  # Rotate left
+            new_m1 = state.m1_target_pos - state.step_size
+            new_m2 = state.m2_target_pos + state.step_size
+            send_move_command(ser, new_m1, new_m2, state.speed)
         
-        # --- 2. Initialization Step ---
-        print("Performing initialization: moving both motors to position 500 at 500Hz...")
-        send_motor_command(uno, 500, 500, 500)
-        print("Initialization complete.\n")
-        
-        # --- 3. Main Command Loop ---
-        while True:
-            print("Enter new motor targets (or Ctrl + C to quit):")
-            m1, m2, hz = get_user_input()
-            send_motor_command(uno, m1, m2, hz)
+        # --- Speed and Step Size ---
+        elif key.char == 'w':
+            state.speed += 50
+        elif key.char == 's':
+            state.speed = max(50, state.speed - 50)
+        elif key.char == 'e':
+            state.step_size += 10
+        elif key.char == 'q':
+            state.step_size = max(10, state.step_size - 10)
 
-    except serial.SerialException as e:
-        print(f"\nError: Could not open or read from serial port {SERIAL_PORT}.")
-        print(f"Details: {e}")
-    except KeyboardInterrupt:
-        print("\nProgram stopped by user.")
-    finally:
-        # --- 4. Reset Step ---
-        if uno and uno.is_open:
-            try:
-                print("Performing reset: moving both motors back to position 0...")
-                send_motor_command(uno, 0, 0, 500)
-                print("Reset complete.")
-            except Exception as e:
-                print(f"Error during reset: {e}")
-            finally:
-                # Ensure the serial port is closed when the program ends
-                uno.close()
-                print("Serial port closed.")
+        # --- Utility Commands ---
+        elif key.char == 'r': # Reset to initial position
+             send_move_command(ser, CONFIG["initial_pos"], CONFIG["initial_pos"], state.speed)
 
+    except AttributeError:
+        # Handle special keys like spacebar and escape
+        if key == keyboard.Key.space:
+            send_command(ser, "<STOP>\n")
+        elif key == keyboard.Key.esc:
+            # Stop the listener and the program
+            state.running = False
+            return False
+            
+# --- Main Execution ---
 if __name__ == "__main__":
-    main_controller()
+    ser = None
+    try:
+        ser = serial.Serial(CONFIG["port"], CONFIG["baud_rate"], timeout=1)
+        print(f"Connected to {CONFIG['port']}. Starting control loop...")
+        time.sleep(2) # Give Arduino time to boot
+
+        # Start the background thread for reading serial messages
+        reader = threading.Thread(target=serial_reader, args=(ser, state))
+        reader.daemon = True # Allows main program to exit even if thread is running
+        reader.start()
+
+        # Perform initial homing
+        print("Performing initial homing...")
+        send_command(ser, "<HOME>\n")
+        time.sleep(10) # Give homing time to complete, adjust as needed
+
+        # Move to starting center position
+        send_move_command(ser, CONFIG["initial_pos"], CONFIG["initial_pos"], state.speed)
+
+        # Start the keyboard listener
+        with keyboard.Listener(on_press=on_press) as listener:
+            while state.running:
+                update_display()
+                time.sleep(0.1) # Refresh rate for the display
+            listener.join()
+    
+    except serial.SerialException as e:
+        print(f"\nError: Could not open serial port {CONFIG['port']}.")
+        print(f"Details: {e}")
+    except Exception as e:
+        print(f"\nAn unexpected error occurred: {e}")
+    finally:
+        print("\nExiting program...")
+        if ser and ser.is_open:
+            try:
+                # Send a final stop and reset command
+                print("Sending reset command...")
+                send_command(ser, "<STOP>\n")
+                time.sleep(0.1)
+                send_move_command(ser, 0, 0, 500)
+                time.sleep(2)
+            finally:
+                state.running = False
+                ser.close()
+                print("Serial port closed.")

@@ -1,11 +1,11 @@
 // --- Pin Definitions for Your Specific STM32 Wiring ---
-#define SLEEP1  PC12 // Motor 1 Enable (EN1)
-#define DIR1    PB8  // Motor 1 Direction
-#define STEP1   PC9  // Motor 1 Step
+#define SLEEP1  7 // Motor 1 Enable (EN1)
+#define DIR1    8  // Motor 1 Direction
+#define STEP1   9  // Motor 1 Step
 
-#define SLEEP2  PD2  // Motor 2 Enable (EN2)
-#define DIR2    PB9  // Motor 2 Direction
-#define STEP2   PC8  // Motor 2 Step
+#define SLEEP2  5  // Motor 2 Enable (EN2)
+#define DIR2    4  // Motor 2 Direction
+#define STEP2   3  // Motor 2 Step
 
 #define MICROSTEP_FACTOR 16
 #define TARGET_FREQUENCY_HZ 5000 // Target speed in microsteps/second

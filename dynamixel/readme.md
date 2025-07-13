@@ -1,76 +1,201 @@
-# 血管内导丝遥操作系统
+# Dynamixel Motor Control System
 
-该项目提供了一个基于键盘方向键控制的血管内导丝操作装置控制系统。它允许通过键盘输入控制两个伺服电机。
+This project provides a comprehensive motor control system for robotic applications using Dynamixel motors and DM-Tac grippers. It includes various teleoperation modes and motor control utilities.
 
-## 功能介绍
+## Features
 
-`operate_wire.py` 脚本通过串行端口与导丝操作设备建立连接，并提供键盘界面来控制两个电机：
+The system includes several control modes and utilities:
 
-- **上/下方向键**：控制第一个电机的角度，负责推/拉导丝
-- **左/右方向键**：控制第二个电机的角度，负责逆时针/顺时针旋转导丝，控制导丝头的朝向
-- **Q 键**：退出程序
+### 1. Keyboard Teleoperation (`keyboard_teleop.py`)
+- **G key**: Switch to GRASP mode - closes the gripper with sensor feedback
+- **R key**: Switch to RELEASE mode - opens the gripper fully
+- **Q key**: Quit the program
+- Includes real-time sensor feedback monitoring
+- Displays gripper position and sensor intensity
 
-每次按键会将相应的电机向指定方向调整1度。系统使用Dynamixel SDK与电机通信，并实现安全控制以防止损坏。
+### 2. Trigger-based Teleoperation with Feedback (`trigger_teleop_fb.py`)
+- Uses a Dynamixel motor as a trigger input (ID: 7, COM4)
+- Automatically controls gripper based on trigger angle threshold (160°)
+- Includes sensor feedback for safe grasping
+- Real-time monitoring of trigger angle, gripper state, and sensor data
 
-## 系统要求
+### 3. Trigger-based Teleoperation without Feedback (`trigger_teleop_no_fb.py`)
+- Similar to the feedback version but without sensor monitoring
+- Simpler control logic for basic trigger-to-gripper mapping
+- Lower threshold angle (160°) for grasp activation
 
-- Python 3.7或更高版本
-- Windows、macOS或Linux操作系统，且有可用的COM端口
-- 通过串行端口连接的Dynamixel电机控制器
+### 4. Motor Angle Reader (`read_motor_angle.py`)
+- Simple utility to read and display motor position in real-time
+- Useful for calibration and testing
+- Displays angle in degrees with continuous updates
 
-## 安装说明
+### 5. Advanced Motor Control (`gripper_teleop/motor_control.py`)
+- Complete 7-DOF robotic arm control system
+- Supports both left and right arm configurations
+- Includes joint limit safety checks
+- Position and velocity control for all joints
+- Integration with PyBullet for simulation
 
-### 1. 准备环境
+## System Requirements
+
+- Python 3.7 or higher
+- Windows, macOS, or Linux with available COM ports
+- Dynamixel motors and DM-Tac gripper hardware
+- Required Python packages (see requirements.txt)
+
+## Dependencies
 
 ```bash
-# 创建并激活虚拟环境（可选但推荐）
+numpy>=1.20.0
+pyserial>=3.5
+keyboard>=0.13.5
+```
+
+Additional dependencies for advanced features:
+- `pybullet` (for simulation)
+- `ikpy` (for inverse kinematics)
+- Custom DM-Tac SDK modules
+
+## Hardware Setup
+
+### Basic Setup
+1. Connect Dynamixel motors to COM4 (default)
+2. Connect DM-Tac gripper to COM3 (default)
+3. Ensure proper power supply and communication
+
+### Advanced Setup (7-DOF Arm)
+- Configure motor IDs according to left/right arm specification
+- Set appropriate joint limits for your hardware
+- Verify all motor connections and power requirements
+
+## Installation
+
+### 1. Environment Setup
+```bash
+# Create and activate virtual environment (recommended)
 python -m venv env
-# Windows系统
+# Windows
 .\env\Scripts\activate
-# macOS/Linux系统
+# macOS/Linux
 source env/bin/activate
 ```
 
-### 2. 安装依赖
-
+### 2. Install Dependencies
 ```bash
-# 安装必需的软件包
 pip install -r requirements.txt
 ```
 
-### 3. 硬件连接
+### 3. Additional Setup
+Ensure the following directories are in your Python path:
+- `../damiao/DM_Control` (for DM-Tac SDK)
+- `../daimon` (for sensor modules)
+- `libgx/` (for Dynamixel SDK)
 
-1. 将手术设备控制器通过USB连接到您的计算机
-2. 确认其使用的COM端口（默认为COM3）
-   - Windows系统：在设备管理器中查看端口（COM和LPT）
-   - macOS系统：使用终端命令 `ls /dev/tty.*`
-   - Linux系统：使用终端命令 `ls /dev/ttyUSB*` 或 `ls /dev/ttyACM*`
+## Usage
 
-### 4. 更新端口设置（如有必要）
-
-如果您的设备未连接到COM3，请修改 `operate_wire.py` 中的第5行：
-```python
-hand = SSRSurgery(port="您的COM端口")  # 替换为您的实际端口
-```
-
-### 5. 运行程序
-
+### Basic Motor Control
 ```bash
-python operate_wire.py
+# Read motor angle
+python read_motor_angle.py
+
+# Keyboard teleoperation
+python keyboard_teleop.py
+
+# Trigger-based control with feedback
+python trigger_teleop_fb.py
+
+# Trigger-based control without feedback
+python trigger_teleop_no_fb.py
 ```
 
-使用方向键控制电机。按"q"退出程序。
+### Advanced Arm Control
+```python
+from gripper_teleop.motor_control import MotorController
 
-## 故障排除
+# Initialize controller
+controller = MotorController()
+controller.Motor_Init('COM3', 921600, 'left')  # or 'right'
 
-- **串行端口问题**：如果您收到"未找到COM端口"或类似错误：
-  - 确认设备已正确连接
-  - 检查您指定的端口是否正确
-  - 确保您有访问该端口的适当权限
+# Control all joints
+positions = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+velocities = [0.3, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3]
+controller.Motor_all_control(positions, velocities)
+```
 
-- **权限错误**：在Linux/macOS上，您可能需要运行：
-  ```bash
-  sudo chmod 666 /dev/ttyUSB0  # 替换为您的端口
-  ```
+## Configuration
 
-- **键盘模块问题**：如果在远程环境或作为服务运行，键盘输入可能无法按预期工作。
+### Port Settings
+- **Dynamixel Motors**: COM4 (default), 1M baud rate
+- **DM-Tac Gripper**: COM3 (default), 921600 baud rate
+- **Motor ID**: 7 (for trigger motor)
+
+### Threshold Settings
+- **Trigger Threshold**: 160° (configurable in scripts)
+- **Sensor Intensity Threshold**: 0.1 (for feedback control)
+- **Gripper Position Limits**: 0.0 to -1.38 radians
+
+## Safety Features
+
+- Joint limit enforcement for 7-DOF arms
+- Sensor feedback for safe grasping
+- Emergency stop functionality
+- Position and velocity constraints
+- Automatic motor disable on program exit
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Port Connection Errors**
+   - Verify COM port numbers in device manager
+   - Check cable connections
+   - Ensure proper permissions (Linux/macOS may need `sudo chmod 666 /dev/ttyUSB0`)
+
+2. **Motor Communication Issues**
+   - Verify motor IDs match configuration
+   - Check baud rate settings
+   - Ensure motors are powered and enabled
+
+3. **Import Errors**
+   - Verify all required directories are in Python path
+   - Check that DM-Tac SDK is properly installed
+   - Ensure all dependencies are installed
+
+4. **Keyboard Input Issues**
+   - In remote environments, keyboard input may not work as expected
+   - Consider using trigger-based control instead
+
+### Debugging
+- Check `sdk_log.log` for Dynamixel SDK messages
+- Monitor serial communication with appropriate tools
+- Use `read_motor_angle.py` to verify basic motor communication
+
+## File Structure
+
+```
+dynamixel/
+├── README.md                 # This file
+├── requirements.txt          # Python dependencies
+├── keyboard_teleop.py        # Keyboard-based gripper control
+├── trigger_teleop_fb.py      # Trigger control with sensor feedback
+├── trigger_teleop_no_fb.py   # Trigger control without feedback
+├── read_motor_angle.py       # Motor position reader utility
+├── libgx/                    # Dynamixel SDK wrapper
+├── gripper_teleop/           # Advanced motor control
+│   ├── motor_control.py      # 7-DOF arm controller
+│   └── trigger_control.py    # Trigger control utilities
+└── sdk_log.log              # SDK operation log
+```
+
+## Contributing
+
+When adding new features:
+1. Follow the existing code structure
+2. Include proper error handling
+3. Add safety checks for motor operations
+4. Update this README with new functionality
+5. Test thoroughly with actual hardware
+
+## License
+
+This project is part of the Multimodal Intervention Robot system. Please refer to the main project documentation for licensing information.

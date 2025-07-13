@@ -1,0 +1,11 @@
+# Requirements for Comprehensive Gripper Control System
+# Core dependencies
+numpy>=1.21.0
+opencv-python>=4.5.0
+pynput>=1.7.0
+pyserial>=3.5
+
+# Optional: For development and testing
+# pytest>=6.0.0
+# black>=21.0.0
+# flake8>=3.8.0 

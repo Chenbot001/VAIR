@@ -1,119 +1,236 @@
-# 达妙Python库
+# Daimiao Python Library
 
-该库目前支持Linux和Windows。示例代码为windows下测试
+This library supports Linux and Windows. Example code has been tested on Windows.
 
-欢迎加入QQ群：677900232 进行达妙电机技术交流
+Welcome to join QQ group: 677900232 for Daimiao motor technical discussions.
 
-### 1.引用达妙库
+## Table of Contents
+- [Installation](#installation)
+- [Basic Usage](#basic-usage)
+- [Motor Control Modes](#motor-control-modes)
+- [Example Scripts](#example-scripts)
+- [API Reference](#api-reference)
 
-默认文件夹下有两个文件DM_CAN.py为所在的电机库，使用的时候
+## Installation
 
-```python
-from DM_CAN import *	
+### Dependencies
+The motor library requires the following Python packages:
+```bash
+pip install serial numpy struct
 ```
 
-电机库相关依赖是serial , numpy , struct这几个库，记得安装相关依赖
-
-### 2.定义控制对象
-
-定义电机对象，有几个电机就定义几个。重要的事情：不要把masterid设为0x00
-
+### Import the Library
 ```python
-Motor1=Motor(DM_Motor_Type.DM4310,0x01,0x11)
-Motor2=Motor(DM_Motor_Type.DM4310,0x02,0x12)
-Motor3=Motor(DM_Motor_Type.DM4310,0x03,0x13)
+from DM_CAN import *
 ```
 
-第一个参数为电机类型，第二个是SlaveID即电机的CANID（电机的ID）,第三个参数是MasterID是主机ID，建议MasterID设置的都不一样，比SlaveID整体高一个。例如Motor1的SlaveID是0x01，MasterID是0x11.这样是最好。
+## Basic Usage
 
-python使用serial串口，波特率是921600，串口进行选择。demo是windows所以是'COM8'
-
-```python
-serial_device = serial.Serial('COM8', 921600, timeout=0.5)
-```
-
-初始化电机控制对象。传入参数是定义的串口对象
+### 1. Define Motor Objects
+Define motor objects for each motor you want to control. **Important**: Do not set MasterID to 0x00.
 
 ```python
-MotorControl1=MotorControl(serial_device)
+Motor1 = Motor(DM_Motor_Type.DM4310, 0x01, 0x11)
+Motor2 = Motor(DM_Motor_Type.DM4310, 0x02, 0x12)
+Motor3 = Motor(DM_Motor_Type.DM4310, 0x03, 0x13)
 ```
 
-### 3.电机控制
+Parameters:
+- **MotorType**: Motor type (e.g., `DM_Motor_Type.DM4310`)
+- **SlaveID**: CAN ID of the motor (motor ID)
+- **MasterID**: Host ID (recommended to be different from SlaveID, typically higher)
 
-**推荐在每帧控制完后延迟2ms或者1ms，usb转can默认有缓冲器没有延迟也可使用，但是推荐加上延迟。**
+### 2. Setup Serial Connection
+Configure the serial port with baud rate 921600:
 
-添加电机是addMotor，然后使能电机是enable
+```python
+import serial
+serial_device = serial.Serial('COM3', 921600, timeout=0.5)  # Windows
+# serial_device = serial.Serial('/dev/ttyUSB0', 921600, timeout=0.5)  # Linux
+```
 
+### 3. Initialize Motor Controller
+```python
+MotorControl1 = MotorControl(serial_device)
+```
+
+### 4. Add and Enable Motors
 ```python
 MotorControl1.addMotor(Motor1)
 MotorControl1.addMotor(Motor2)
 MotorControl1.addMotor(Motor3)
+
 MotorControl1.enable(Motor1)
 MotorControl1.enable(Motor2)
 MotorControl1.enable(Motor3)
 ```
 
-#### 3.1MIT模式
+**Note**: It's recommended to add a 1-2ms delay after each control frame for USB-to-CAN adapters with buffers.
 
-使能电机后可以使用MIT模式控制，推荐用MIT模式控制。
+## Motor Control Modes
 
-```python
-MotorControl1.controlMIT(Motor1, 50, 0.3, 0, 0, 0)
-```
-
-其中MotorControl电机控制还有附带delay时间的控制。
+### 1. MIT Mode (Recommended)
+MIT mode provides the most flexible control with position, velocity, and torque parameters.
 
 ```python
-MotorControl1.controlMIT_delay(Motor1, 50, 0.3, 0, 0, 0，0.001)
+# Basic MIT control
+MotorControl1.controlMIT(Motor1, kp=50, kd=0.3, q=0, dq=0, tau=0)
+
+# MIT control with delay
+MotorControl1.control_delay(Motor1, kp=50, kd=0.3, q=0, dq=0, tau=0, delay=0.001)
 ```
 
-#### 3.2 位置速度模式
+Parameters:
+- `kp`: Position gain
+- `kd`: Velocity gain  
+- `q`: Desired position (rad)
+- `dq`: Desired velocity (rad/s)
+- `tau`: Desired torque (Nm)
 
-位置速度模式，第一个参数是电机对象，第二个是位置，第三个是转动速度。具体的参数介绍已经写了函数文档，用pycharm等ide就可以看到。
-
-例子如下
+### 2. Position-Velocity Mode
+Control motor position with specified velocity.
 
 ```python
-q=math.sin(time.time())
-MotorControl1.control_Pos_Vel(Motor1,q*10,2)
+import math
+import time
+
+q = math.sin(time.time())
+MotorControl1.control_Pos_Vel(Motor1, q * 10, 2)
 ```
 
-#### 3.3 速度模式
-
-例子如下，第一个是电机对象，第二个是电机速度
+### 3. Velocity Mode
+Direct velocity control.
 
 ```python
-q=math.sin(time.time())
-MotorControl1.control_Vel(Motor1, q*5)
+q = math.sin(time.time())
+MotorControl1.control_Vel(Motor1, q * 5)
 ```
 
-目前达妙的新固件支持切换
-
-#### 3.4力位混合模式
-
-第一个是电机对象，第二个是电机位置，第三个是电机速度范围是0-10000，第四个是电机电流范围为0-10000。具体详细请查看达妙文档
-
-例子如下
+### 4. Position-Force Mode (EMIT)
+Hybrid position and force control.
 
 ```python
-MotorControl1.control_pos_force(Motor1, 10, 1000,100)
+MotorControl1.control_pos_force(Motor1, position=10, velocity=1000, current=100)
 ```
 
-### 4.电机模式更改
+Parameters:
+- `position`: Desired position (rad)
+- `velocity`: Velocity limit (0-10000, scaled by 100)
+- `current`: Current limit (0-10000, normalized current value)
 
-达妙电机新固件支持使用can进行电机模式修改，以及修改其他参数等操作。具体请咨询达妙客服。
+## Example Scripts
 
-通过下面的函数可以对电机的控制模式进行修改。支持MIT,POS_VEL,VEL,Torque_Pos。四种控制模式在线修改。下面是修改的demo。
+### 1. Zero Position Setting (`zero_set_motor.py`)
+Simple script to set the motor's zero position:
 
 ```python
-MotorControl1.switchControlMode(Motor1,Control_Type.POS_VEL)
+from DM_CAN import *
+import serial
+import time
+
+Motor1 = Motor(DM_Motor_Type.DM4310, 0x01, 0x11)
+serial_device = serial.Serial('COM3', 921600, timeout=0.5)
+Motor_Control = MotorControl(serial_device)
+Motor_Control.addMotor(Motor1)
+Motor_Control.set_zero_position(Motor1)
+time.sleep(0.2)
+print("Set Zero Position Successfully!")
+serial_device.close()
 ```
 
-**保存参数**
+### 2. Gripper Control (`test_gripper.py`)
+Interactive gripper control with safety limits and percentage-based control:
 
-默认电机修改模式等操作后参数不会保存到flash中，需要使用命令如下进行保存至电机的flash中
+```bash
+python test_gripper.py
+```
+
+Features:
+- **Safety limits**: Position constrained to [-1.35, 0] radians
+- **Percentage control**: 0% = fully open, 100% = fully closed
+- **Interactive commands**:
+  - `o`: Open gripper (0% closed)
+  - `c`: Close gripper (100% closed)  
+  - `h`: Half-open (50% closed)
+  - `1-9, 0`: Move to specific percentage (10%-100%)
+  - `q`: Quit
+
+## Motor Mode Switching
+
+The new Daimiao firmware supports online mode switching via CAN commands.
+
+### Available Control Modes
+```python
+Control_Type.MIT        # MIT control mode
+Control_Type.POS_VEL    # Position-velocity mode
+Control_Type.VEL        # Velocity mode  
+Control_Type.Torque_Pos # Torque-position mode
+```
+
+### Switch Control Mode
+```python
+MotorControl1.switchControlMode(Motor1, Control_Type.POS_VEL)
+```
+
+### Save Parameters to Flash
+By default, parameter changes are not saved to flash memory. Use this command to save:
 
 ```python
 MotorControl1.save_motor_param(Motor1)
 ```
+
+## Supported Motor Types
+
+```python
+DM_Motor_Type.DM4310      # DM4310 motor
+DM_Motor_Type.DM4310_48V  # DM4310 48V motor
+DM_Motor_Type.DM4340      # DM4340 motor
+DM_Motor_Type.DM4340_48V  # DM4340 48V motor
+DM_Motor_Type.DM6006      # DM6006 motor
+DM_Motor_Type.DM8006      # DM8006 motor
+DM_Motor_Type.DM8009      # DM8009 motor
+DM_Motor_Type.DM10010L    # DM10010L motor
+DM_Motor_Type.DM10010     # DM10010 motor
+DM_Motor_Type.DMH3510     # DMH3510 motor
+DM_Motor_Type.DMH6215     # DMH6215 motor
+DM_Motor_Type.DMG6220     # DMG6220 motor
+```
+
+## API Reference
+
+### Motor Class
+```python
+motor = Motor(MotorType, SlaveID, MasterID)
+motor.getPosition()    # Get current position
+motor.getVelocity()    # Get current velocity  
+motor.getTorque()      # Get current torque
+```
+
+### MotorControl Class
+```python
+controller = MotorControl(serial_device)
+controller.addMotor(motor)                    # Add motor to controller
+controller.enable(motor)                      # Enable motor
+controller.disable(motor)                     # Disable motor
+controller.set_zero_position(motor)           # Set zero position
+controller.switchControlMode(motor, mode)     # Switch control mode
+controller.save_motor_param(motor)            # Save parameters to flash
+```
+
+### Control Methods
+```python
+controller.controlMIT(motor, kp, kd, q, dq, tau)           # MIT control
+controller.control_Pos_Vel(motor, position, velocity)      # Position-velocity control
+controller.control_Vel(motor, velocity)                    # Velocity control
+controller.control_pos_force(motor, pos, vel, current)     # Position-force control
+```
+
+## Troubleshooting
+
+1. **Serial Port Issues**: Ensure correct COM port and baud rate (921600)
+2. **Motor Not Found**: Verify SlaveID and MasterID settings
+3. **Control Mode Errors**: Check if motor is enabled before switching modes
+4. **Parameter Changes**: Remember to save parameters to flash if needed
+
+For detailed technical documentation, please refer to the Daimiao motor documentation or contact Daimiao customer service.
 

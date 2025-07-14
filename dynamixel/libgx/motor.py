@@ -1,4 +1,4 @@
-from .dynamixel_sdk import * 
+from dynamixel_sdk import * 
 import os
 import time
 import numpy as np

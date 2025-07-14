@@ -1,5 +1,3 @@
-from libgx.dynamixel_sdk import *  # Import the SDK
-from libgx.motor import Motor as DynamixelMotor
 import serial
 import time
 import sys
@@ -7,12 +5,21 @@ import os
 import numpy as np
 import msvcrt  # Import msvcrt for keyboard input
 
-# Add paths before imports
-sys.path.append(os.path.abspath('../damiao/DM_Control'))
-sys.path.insert(0, os.path.abspath('../daimon'))  # Prepend DM-Tac folder to Python path
+# Add paths for local imports
+sys.path.append(os.path.abspath('dynamixel/libgx'))
+sys.path.append(os.path.abspath('damiao/DM_Control'))
+sys.path.append(os.path.abspath('daimon'))
 
-from DM_CAN import MotorControl, Motor as GripperMotor, DM_Motor_Type, Control_Type
-from dmrobotics import Sensor
+# Import local modules
+try:
+    from dynamixel_sdk import *  # Import the SDK
+    from motor import Motor as DynamixelMotor
+    from DM_CAN import MotorControl, Motor as GripperMotor, DM_Motor_Type, Control_Type
+    from dmrobotics import Sensor
+    print("✓ All modules imported successfully")
+except ImportError as e:
+    print(f"✗ Import error: {e}")
+    sys.exit(1)
 
 # Constants
 DXL_ID = 7  # Dynamixel motor ID
@@ -110,7 +117,7 @@ try:
         sensor_feedback = control_gripper(state)
         # Get gripper position in degrees
         gripper_pos = gripper_motor.getPosition()
-        print(f"\rTrigger Angle: {trigger_angle:.2f} | Gripper State: {state} | Gripper Position: {gripper_pos:.2f} | Max Intensity: {sensor_feedback:.2f}", end="")
+        print(f"\rTrigger Angle: {trigger_angle:.2f} | Gripper State: {state} | Gripper Position: {gripper_pos:.4f} | Max Intensity: {sensor_feedback:.2f}", end="")
 
         #time.sleep(0.01)
 except KeyboardInterrupt:

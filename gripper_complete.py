@@ -42,18 +42,47 @@ try:
     from motor import Motor as DynamixelMotor
     from DM_CAN import MotorControl, Motor as GripperMotor, DM_Motor_Type, Control_Type
     from dmrobotics import Sensor, put_arrows_on_image
+    print("✓ All modules imported successfully")
 except ImportError as e:
     print(f"Warning: Could not import local modules: {e}")
     print("Make sure all required modules are available in the subdirectories")
     # Define placeholder classes for type checking
     class DynamixelMotor:
-        pass
+        def __init__(self, id, port_handler, packet_handler):
+            pass
+        def torq_off(self):
+            pass
+        def get_pos(self):
+            return 0
     class GripperMotor:
-        pass
+        def __init__(self, motor_type, slave_id, master_id):
+            pass
+        def getPosition(self):
+            return 0
     class MotorControl:
-        pass
+        def __init__(self, serial_device):
+            pass
+        def addMotor(self, motor):
+            pass
+        def enable(self, motor):
+            pass
+        def switchControlMode(self, motor, control_type):
+            pass
+        def control_Pos_Vel(self, motor, position, velocity):
+            pass
+        def disable(self, motor):
+            pass
     class Sensor:
-        pass
+        def __init__(self, dev_id):
+            pass
+        def getDepth(self):
+            return np.zeros((100, 100))
+        def getDeformation2D(self):
+            return np.zeros((100, 100, 2))
+        def getShear(self):
+            return np.zeros((100, 100, 2))
+        def disconnect(self):
+            pass
 
 class GripperState(Enum):
     """Enumeration for gripper states"""
@@ -88,7 +117,7 @@ class GripperController:
             "gripper_min_pos": -1.38,
             
             # Stepper motor settings
-            "stepper_port": "COM8",
+            "stepper_port": "COM10",
             "stepper_baud": 115200,
             "stepper_microsteps": 16,
             "stepper_max_steps": 1000,
@@ -108,6 +137,10 @@ class GripperController:
         self.running = True
         self.sensor_baseline = None
         
+        # Stepper motor position tracking
+        self.current_m1_pos = self.config["stepper_initial_pos"]
+        self.current_m2_pos = self.config["stepper_initial_pos"]
+        
         # Initialize components
         self.trigger_motor = None
         self.gripper_motor = None
@@ -117,7 +150,7 @@ class GripperController:
         
         # Threading
         self.sensor_thread: threading.Thread = None  # type: ignore
-        self.display_thread: threading.Thread = None  # type: ignore
+        self.display_thread_obj: threading.Thread = None  # type: ignore
         
     def initialize_trigger(self):
         """Initialize the Dynamixel trigger motor"""
@@ -295,14 +328,31 @@ class GripperController:
         """Rotate the catheter using stepper motors"""
         if direction == "right":
             # Extend one motor, retract the other for rotation
-            current_m1 = self.config["stepper_initial_pos"] + self.config["stepper_step_size"]
-            current_m2 = self.config["stepper_initial_pos"] - self.config["stepper_step_size"]
-            self.send_stepper_move(current_m1, current_m2, self.config["stepper_speed"])
+            new_m1_pos = self.current_m1_pos + self.config["stepper_step_size"]
+            new_m2_pos = self.current_m2_pos - self.config["stepper_step_size"]
+            
+            # Check limits before updating
+            if (0 <= new_m1_pos <= self.config["stepper_max_steps"] and 
+                0 <= new_m2_pos <= self.config["stepper_max_steps"]):
+                self.current_m1_pos = new_m1_pos
+                self.current_m2_pos = new_m2_pos
+                self.send_stepper_move(self.current_m1_pos, self.current_m2_pos, self.config["stepper_speed"])
+            else:
+                print("Stepper motors at limit - cannot rotate further")
+                
         elif direction == "left":
             # Retract one motor, extend the other for rotation
-            current_m1 = self.config["stepper_initial_pos"] - self.config["stepper_step_size"]
-            current_m2 = self.config["stepper_initial_pos"] + self.config["stepper_step_size"]
-            self.send_stepper_move(current_m1, current_m2, self.config["stepper_speed"])
+            new_m1_pos = self.current_m1_pos - self.config["stepper_step_size"]
+            new_m2_pos = self.current_m2_pos + self.config["stepper_step_size"]
+            
+            # Check limits before updating
+            if (0 <= new_m1_pos <= self.config["stepper_max_steps"] and 
+                0 <= new_m2_pos <= self.config["stepper_max_steps"]):
+                self.current_m1_pos = new_m1_pos
+                self.current_m2_pos = new_m2_pos
+                self.send_stepper_move(self.current_m1_pos, self.current_m2_pos, self.config["stepper_speed"])
+            else:
+                print("Stepper motors at limit - cannot rotate further")
     
     def on_key_press(self, key):
         """Handle keyboard input for stepper motor control"""
@@ -314,6 +364,8 @@ class GripperController:
             elif key.char == 's':  # Stop stepper motors
                 self.send_stepper_command("<STOP>\n")
             elif key.char == 'r':  # Reset stepper position
+                self.current_m1_pos = self.config["stepper_initial_pos"]
+                self.current_m2_pos = self.config["stepper_initial_pos"]
                 self.send_stepper_move(
                     self.config["stepper_initial_pos"], 
                     self.config["stepper_initial_pos"], 
@@ -347,39 +399,45 @@ class GripperController:
     
     def display_thread(self):
         """Background thread for status display"""
+        print("Display thread started!")  # Debug output
+        last_update = 0
         while self.running:
             try:
-                # Clear screen
-                os.system('cls' if os.name == 'nt' else 'clear')
-                
-                print("=== Comprehensive Gripper Control System ===")
-                print(f"Gripper State: {self.gripper_state.value}")
-                print(f"Stepper State: {self.stepper_state.value}")
-                
-                # Display trigger angle
-                if self.trigger_motor:
-                    trigger_angle = self.trigger_motor.get_pos()
-                    print(f"Trigger Angle: {trigger_angle:.2f}°")
-                
-                # Display gripper position
-                if self.gripper_motor:
-                    gripper_pos = self.gripper_motor.getPosition()
-                    print(f"Gripper Position: {gripper_pos:.3f} rad")
-                
-                # Display sensor feedback
-                if self.sensor and self.sensor_baseline:
-                    depth = self.sensor.getDepth()
-                    adjusted_depth = depth - self.sensor_baseline['depth']
-                    max_intensity = np.max(adjusted_depth)
-                    print(f"Sensor Max Intensity: {max_intensity:.3f}")
-                
-                print("\nControls:")
-                print("  Trigger: Controls gripper open/close")
-                print("  [A/D]: Rotate catheter left/right")
-                print("  [S]: Stop stepper motors")
-                print("  [R]: Reset stepper position")
-                print("  [ESC]: Quit")
-                print("=" * 50)
+                current_time = time.time()
+                # Only update display every 2 seconds to avoid spam
+                if current_time - last_update >= 2.0:
+                    print("\n" + "="*60)
+                    print("=== Comprehensive Gripper Control System ===")
+                    print(f"Gripper State: {self.gripper_state.value}")
+                    print(f"Stepper State: {self.stepper_state.value}")
+                    print(f"Stepper M1 Position: {self.current_m1_pos}")
+                    print(f"Stepper M2 Position: {self.current_m2_pos}")
+                    
+                    # Display trigger angle
+                    if self.trigger_motor:
+                        trigger_angle = self.trigger_motor.get_pos()
+                        print(f"Trigger Angle: {trigger_angle:.2f}°")
+                    
+                    # Display gripper position
+                    if self.gripper_motor:
+                        gripper_pos = self.gripper_motor.getPosition()
+                        print(f"Gripper Position: {gripper_pos:.3f} rad")
+                    
+                    # Display sensor feedback
+                    if self.sensor and self.sensor_baseline:
+                        depth = self.sensor.getDepth()
+                        adjusted_depth = depth - self.sensor_baseline['depth']
+                        max_intensity = np.max(adjusted_depth)
+                        print(f"Sensor Max Intensity: {max_intensity:.3f}")
+                    
+                    print("\nControls:")
+                    print("  Trigger: Controls gripper open/close")
+                    print("  [A/D]: Rotate catheter left/right")
+                    print("  [S]: Stop stepper motors")
+                    print("  [R]: Reset stepper position")
+                    print("  [ESC]: Quit")
+                    print("="*60)
+                    last_update = current_time
                 
             except Exception as e:
                 print(f"Display error: {e}")
@@ -405,7 +463,7 @@ class GripperController:
                     # Control gripper based on state
                     sensor_feedback = self.control_gripper(self.gripper_state)
                 
-                time.sleep(0.01)  # 100Hz control rate
+                time.sleep(0.05)  # 20Hz control rate (less aggressive)
                 
         except KeyboardInterrupt:
             print("\nKeyboard interrupt received")
@@ -443,13 +501,22 @@ class GripperController:
         print("Initializing Comprehensive Gripper Control System...")
         
         # Initialize all components
-        if not all([
-            self.initialize_trigger(),
-            self.initialize_gripper(),
-            self.initialize_stepper(),
-            self.initialize_sensor()
-        ]):
-            print("Failed to initialize one or more components")
+        init_results = {
+            'trigger': self.initialize_trigger(),
+            'gripper': self.initialize_gripper(),
+            'stepper': self.initialize_stepper(),
+            'sensor': self.initialize_sensor()
+        }
+        
+        # Check if all components initialized successfully
+        failed_components = [name for name, success in init_results.items() if not success]
+        
+        if failed_components:
+            print(f"Failed to initialize the following components: {', '.join(failed_components)}")
+            print("System cannot start without all components. Please check connections and try again.")
+            
+            # Clean up any partially initialized components
+            self.cleanup()
             return
         
         print("All components initialized successfully!")
@@ -459,9 +526,12 @@ class GripperController:
         self.sensor_thread.daemon = True
         self.sensor_thread.start()
         
-        self.display_thread = threading.Thread(target=self.display_thread)
-        self.display_thread.daemon = True
-        self.display_thread.start()
+        self.display_thread_obj = threading.Thread(target=self.display_thread)
+        self.display_thread_obj.daemon = True
+        self.display_thread_obj.start()
+        
+        # Give threads time to start
+        time.sleep(0.5)
         
         # Start keyboard listener
         keyboard_listener = keyboard.Listener(on_press=self.on_key_press)

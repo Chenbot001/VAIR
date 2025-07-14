@@ -8,7 +8,7 @@ from pynput import keyboard
 
 # --- Configuration ---
 CONFIG = {
-    "port": "COM8",
+    "port": "COM10",
     "baud_rate": 115200,
     "microsteps": 16,
     "max_steps": 1000,

@@ -93,16 +93,21 @@ def display_sensor_data(sensor_num, data, black_img):
     cv2.putText(shear_img, f"Sensor {sensor_num} - Shear", (10, 20), 
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
     
+    # Add text label to depth image
+    depth_img_labeled = data['depth_img'].copy()
+    cv2.putText(depth_img_labeled, f"Sensor {sensor_num} - Depth", (10, 20), 
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+    
     return {
         'deformation': deformation_img,
         'shear': shear_img,
-        # Uncomment these lines if you want to display raw and depth images
-        # 'raw': data['img'],
-        # 'depth': data['depth_img']
+        'depth': depth_img_labeled,
+        # Uncomment this line if you want to display raw images
+        # 'raw': data['img']
     }
 
 def display_combined_data(sensor1_vis, sensor2_vis=None):
-    """Display sensor visualizations in a 2x2 grid"""
+    """Display sensor visualizations in a 2x3 grid"""
     # Create a placeholder black image for single sensor mode
     if not sensor2_vis:
         # Make a placeholder with same dimensions as sensor1's images
@@ -111,12 +116,13 @@ def display_combined_data(sensor1_vis, sensor2_vis=None):
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
         sensor2_vis = {
             'deformation': placeholder,
-            'shear': placeholder.copy()
+            'shear': placeholder.copy(),
+            'depth': placeholder.copy()
         }
     
-    # Create the 2x2 grid (deformation images on top, shear images on bottom)
-    top_row = [sensor1_vis['deformation'], sensor2_vis['deformation']]
-    bottom_row = [sensor1_vis['shear'], sensor2_vis['shear']]
+    # Create the 2x3 grid (deformation, shear, depth images)
+    top_row = [sensor1_vis['deformation'], sensor1_vis['shear'], sensor1_vis['depth']]
+    bottom_row = [sensor2_vis['deformation'], sensor2_vis['shear'], sensor2_vis['depth']]
     
     # Combine all images into a single grid
     grid_img = create_grid(top_row, bottom_row)
@@ -124,20 +130,13 @@ def display_combined_data(sensor1_vis, sensor2_vis=None):
     # Display the combined visualization
     cv2.imshow('Tactile Sensor Visualization', grid_img)
     
-    # Uncomment these lines if you want to display raw and depth images
+    # Uncomment these lines if you want to display raw images
     # if 'raw' in sensor1_vis:
     #     raw_images = [sensor1_vis['raw']]
     #     if sensor2_vis and 'raw' in sensor2_vis:
     #         raw_images.append(sensor2_vis['raw'])
     #     combined_raw = hconcat_resize(raw_images)
     #     cv2.imshow('Raw Image Visualization', combined_raw)
-    # 
-    # if 'depth' in sensor1_vis:
-    #     depth_images = [sensor1_vis['depth']]
-    #     if sensor2_vis and 'depth' in sensor2_vis:
-    #         depth_images.append(sensor2_vis['depth'])
-    #     combined_depth = hconcat_resize(depth_images)
-    #     cv2.imshow('Depth Visualization', combined_depth)
 
 if __name__ == "__main__":
     # Register signal handler for graceful shutdown

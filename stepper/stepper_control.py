@@ -8,7 +8,7 @@ from pynput import keyboard
 
 # --- Configuration ---
 CONFIG = {
-    "port": "COM10",
+    "port": "COM9",
     "baud_rate": 115200,
     "microsteps": 16,
     "max_steps": 1000,
@@ -82,11 +82,11 @@ def on_press(key):
     """Handles key press events."""
     try:
         # --- Rotational Movement ---
-        if key.char == 'd':  # Rotate right
+        if key.char == 'a':  # Rotate left
             new_m1 = state.m1_target_pos + state.step_size
             new_m2 = state.m2_target_pos - state.step_size
             send_move_command(ser, new_m1, new_m2, state.speed)
-        elif key.char == 'a':  # Rotate left
+        elif key.char == 'd':  # Rotate rightaaaaaaaadddddddadd
             new_m1 = state.m1_target_pos - state.step_size
             new_m2 = state.m2_target_pos + state.step_size
             send_move_command(ser, new_m1, new_m2, state.speed)

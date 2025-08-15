@@ -6,6 +6,7 @@ Integrated control for both stepper motor rotation and DM motor gripper actuatio
 This script combines:
 - Stepper motor control for gripper rotation (via Arduino)
 - DM motor control for gripper open/close (via CAN)
+- Depth sensor integration for object detection
 
 Stepper Motor Controls:
 - [A/D] Rotate gripper left/right
@@ -28,12 +29,21 @@ import os
 import threading
 import sys
 import math
+import cv2
+import numpy as np
 
 from pynput import keyboard
 
 # Add paths for local imports
 sys.path.append(os.path.join(os.path.dirname(__file__), 'damiao', 'DM_Control'))
 
+# Import sensor functionality
+try:
+    from dmrobotics import Sensor, put_arrows_on_image
+    SENSOR_AVAILABLE = True
+except ImportError:
+    print("Warning: Sensor library not available. Depth sensing disabled.")
+    SENSOR_AVAILABLE = False
 
 # Import DM motor control from the damiao folder
 try:
@@ -53,7 +63,7 @@ CONFIG = {
     "microsteps": 16,
     "max_steps": 1000,
     "initial_pos": 500,
-    "initial_speed": 100,
+    "initial_speed": 50,
     
     # Gripper motor configuration
     "gripper_port": "COM3",
@@ -61,7 +71,8 @@ CONFIG = {
     "gripper_motor_id": 0x01,
     "gripper_can_id": 0x11,
     
-
+    # Sensor configuration
+    "sensor_serial_id": 0,
 }
 
 # Gripper position limits (in radians)
@@ -81,6 +92,20 @@ class SystemState:
         # Gripper state
         self.gripper_closure_percent = 0  # 0% = open, 100% = closed
         self.gripper_position_rad = GRIPPER_MAX_POS
+        
+        # Sensor state
+        self.max_depth_intensity = 0.0
+        self.baseline_intensity = 0.0  # Baseline intensity when gripper is fully open
+        self.net_intensity = 0.0       # Net increase in intensity (current - baseline)
+        self.sensor_connected = False
+        self.last_sensor_msg = ""
+        
+        # Adaptive gripping state
+        self.adaptive_gripping_enabled = True
+        self.gripping_threshold = 0.2  # Lower threshold for more sensitive detection
+        self.is_gripping = False       # Whether currently in gripping operation
+        self.gripping_started = False  # Whether gripping operation has started
+        self.gripping_thread = None    # Reference to the gripping thread
         
         # System state
         self.last_stepper_msg = ""
@@ -112,6 +137,210 @@ def safe_gripper_position(position):
         state.last_gripper_msg = f"Position limited: {position:.3f} → {limited_position:.3f}"
     return limited_position
 
+# --- Sensor Functions ---
+def setup_sensor():
+    """Initialize and configure the depth sensor"""
+    if not SENSOR_AVAILABLE:
+        return None
+    
+    try:
+        sensor = Sensor(CONFIG["sensor_serial_id"])
+        state.sensor_connected = True
+        state.last_sensor_msg = "Sensor connected successfully"
+        return sensor
+    except Exception as e:
+        state.last_sensor_msg = f"ERR: Sensor setup failed: {e}"
+        return None
+
+def get_max_depth_intensity(sensor):
+    """
+    Get the sensor depth image and return the maximum intensity as a floating point value.
+    
+    Args:
+        sensor: The sensor object from dmrobotics
+        
+    Returns:
+        float: Maximum depth intensity value, or 0.0 if sensor is not available
+    """
+    if not sensor or not SENSOR_AVAILABLE:
+        return 0.0
+    
+    try:
+        # Get the depth data from sensor
+        depth = sensor.getDepth()
+        
+        if depth is not None and depth.size > 0:
+            # Find the maximum intensity value in the depth image
+            max_intensity = float(np.max(depth))
+            state.max_depth_intensity = max_intensity
+            
+            # Calculate net intensity (current - baseline)
+            state.net_intensity = max_intensity - state.baseline_intensity
+            
+            state.last_sensor_msg = f"Max: {max_intensity:.3f}, Net: {state.net_intensity:.3f}"
+            return max_intensity
+        else:
+            state.last_sensor_msg = "No depth data available"
+            return 0.0
+            
+    except Exception as e:
+        state.last_sensor_msg = f"ERR: Failed to get depth intensity: {e}"
+        return 0.0
+
+def calibrate_baseline_intensity(sensor, samples=10):
+    """
+    Calibrate the baseline intensity when gripper is fully open.
+    
+    Args:
+        sensor: The sensor object from dmrobotics
+        samples: Number of samples to average for baseline
+    """
+    if not sensor or not SENSOR_AVAILABLE:
+        state.last_sensor_msg = "ERR: Sensor not available for calibration"
+        return False
+    
+    try:
+        print("Calibrating baseline intensity...")
+        total_intensity = 0.0
+        valid_samples = 0
+        
+        for i in range(samples):
+            intensity = get_max_depth_intensity(sensor)
+            if intensity > 0.0:
+                total_intensity += intensity
+                valid_samples += 1
+            time.sleep(0.1)
+        
+        if valid_samples > 0:
+            state.baseline_intensity = total_intensity / valid_samples
+            state.net_intensity = 0.0  # Reset net intensity
+            state.last_sensor_msg = f"Baseline calibrated: {state.baseline_intensity:.3f}"
+            print(f"✓ Baseline intensity calibrated: {state.baseline_intensity:.3f}")
+            return True
+        else:
+            state.last_sensor_msg = "ERR: No valid samples for calibration"
+            return False
+            
+    except Exception as e:
+        state.last_sensor_msg = f"ERR: Calibration failed: {e}"
+        return False
+
+def start_adaptive_gripping():
+    """Start an adaptive gripping operation"""
+    state.is_gripping = True
+    state.gripping_started = True
+    state.last_gripper_msg = "Starting adaptive gripping..."
+
+def stop_adaptive_gripping():
+    """Stop the current adaptive gripping operation"""
+    state.is_gripping = False
+    state.gripping_started = False
+    state.gripping_thread = None
+    state.last_gripper_msg = "Adaptive gripping stopped"
+
+def check_gripping_condition():
+    """
+    Check if the net intensity exceeds the threshold during gripping.
+    Returns True if object detected (should stop gripping).
+    Based on the working trigger_teleop_fb.py approach.
+    """
+    if not state.is_gripping:
+        return False
+    
+    # Use the same threshold logic as the working script
+    return state.net_intensity > state.gripping_threshold
+
+def handle_adaptive_gripping(motor_control, motor, target_percentage, velocity=0.3):
+    """
+    Handle adaptive gripping by continuously monitoring sensor and stopping when object detected.
+    Based on the working trigger_teleop_fb.py approach.
+    """
+    if not motor_control or not motor:
+        state.last_gripper_msg = "ERR: Motor not available for adaptive gripping"
+        return
+    
+    # Ensure sensor is connected and providing data
+    if not state.sensor_connected or state.max_depth_intensity == 0.0:
+        state.last_gripper_msg = "ERR: Sensor not ready for adaptive gripping"
+        return
+    
+    # Ensure we're not already gripping
+    if state.is_gripping:
+        state.last_gripper_msg = "ERR: Already in gripping operation"
+        return
+    
+    try:
+        # Start adaptive gripping state
+        start_adaptive_gripping()
+        state.last_gripper_msg = "Starting adaptive gripping..."
+        
+        # Get current position to use as hold position if needed
+        try:
+            current_pos = motor.getPosition()
+        except:
+            # Fallback to current state position if getPosition() fails
+            current_pos = state.gripper_position_rad
+        
+        # Send command to move toward fully closed
+        target_position = percentage_to_position(target_percentage)
+        safe_pos = safe_gripper_position(target_position)
+        motor_control.control_Pos_Vel(motor, safe_pos, velocity)
+        
+        # Update state
+        state.gripper_closure_percent = target_percentage
+        state.gripper_position_rad = safe_pos
+        
+        # Monitor sensor while gripper is moving
+        while state.is_gripping:
+            # Check sensor feedback
+            if check_gripping_condition():
+                # Object detected - get current position and hold it
+                try:
+                    hold_pos = motor.getPosition()
+                except:
+                    # Fallback to current state position
+                    hold_pos = state.gripper_position_rad
+                
+                # Send command to hold current position with zero velocity to stop movement
+                motor_control.control_Pos_Vel(motor, hold_pos, 0.0)
+                
+                # Send multiple stop commands to ensure motor stops
+                for _ in range(3):
+                    motor_control.control_Pos_Vel(motor, hold_pos, 0.0)
+                    time.sleep(0.01)
+                
+                current_percentage = position_to_percentage(hold_pos)
+                print(f"\n[STOP] Object detected! Holding at {current_percentage:.1f}% closed")
+                # Update state to reflect the actual holding position
+                state.gripper_position_rad = hold_pos
+                state.gripper_closure_percent = current_percentage
+                state.last_gripper_msg = f"Object detected! Holding at {current_percentage:.1f}% closed"
+                stop_adaptive_gripping()
+                break
+            else:
+                # No object detected - continue monitoring
+                # Get current position for display
+                try:
+                    current_pos = motor.getPosition()
+                except:
+                    current_pos = state.gripper_position_rad
+                
+                # Debug output
+                current_percentage = position_to_percentage(current_pos)
+                print(f"\r[GRIP] {current_percentage:.1f}% | Net: {state.net_intensity:.3f} | Threshold: {state.gripping_threshold:.3f}", end="")
+                
+                # Much faster polling for better responsiveness
+                time.sleep(0.01)  # 100Hz polling
+                
+                # Check if we've reached the target without object detection
+                if current_percentage >= target_percentage:
+                    state.last_gripper_msg = f"Reached target {target_percentage:.1f}% without object detection"
+                    stop_adaptive_gripping()
+                    break
+            
+    except Exception as e:
+        state.last_gripper_msg = f"ERR: Adaptive gripping failed: {e}"
+        stop_adaptive_gripping()
 
 
 # --- Serial Communication ---
@@ -128,6 +357,22 @@ def stepper_reader(ser, state):
             state.stepper_connected = False
             break
         time.sleep(0.05)
+
+def sensor_reader(sensor, state):
+    """Continuously reads from the sensor and updates depth intensity in the background."""
+    while state.running:
+        try:
+            if sensor and state.sensor_connected:
+                get_max_depth_intensity(sensor)
+                # Read more frequently when gripping is active
+                if state.is_gripping:
+                    time.sleep(0.01)  # 100Hz when gripping for maximum responsiveness
+                else:
+                    time.sleep(0.1)   # 10Hz when not gripping
+        except Exception as e:
+            state.last_sensor_msg = f"ERR: Sensor reading failed: {e}"
+            state.sensor_connected = False
+            break
 
 def send_stepper_command(ser, command):
     """Sends a command to the Arduino."""
@@ -179,24 +424,50 @@ def setup_gripper():
         state.last_gripper_msg = f"ERR: Gripper setup failed: {e}"
         return None, None, None
 
-def move_gripper_to_percentage(motor_control, motor, percentage, velocity=2.0):
-    """Move gripper to a specific closure percentage"""
+def move_gripper_to_percentage(motor_control, motor, percentage, velocity=0.3):
+    """
+    Move gripper to a specific closure percentage with adaptive gripping for closing operations.
+    
+    Args:
+        motor_control: The motor control object
+        motor: The motor object
+        percentage: Target closure percentage (0-100)
+        velocity: Movement velocity
+    """
     if not motor_control or not motor:
         state.last_gripper_msg = "ERR: Gripper not available"
         return
     
+    # Stop any existing adaptive gripping operation
+    if state.is_gripping:
+        stop_adaptive_gripping()
+        time.sleep(0.1)  # Brief pause to ensure clean state
+    
     try:
         # Convert percentage to radians
-        position = percentage_to_position(percentage)
-        safe_pos = safe_gripper_position(position)
+        target_position = percentage_to_position(percentage)
+        safe_pos = safe_gripper_position(target_position)
         
         # Update state
         state.gripper_closure_percent = percentage
         state.gripper_position_rad = safe_pos
         
-        # Send command to motor
-        motor_control.control_Pos_Vel(motor, safe_pos, velocity)
-        state.last_gripper_msg = f"Moving to {percentage:.1f}% closed ({safe_pos:.3f} rad)"
+        if percentage > 0:
+            # Always use adaptive gripping for closing operations
+            state.last_gripper_msg = f"Starting adaptive grip to {percentage:.1f}%"
+            # Start adaptive gripping in a separate thread with slower velocity
+            import threading
+            grip_thread = threading.Thread(
+                target=handle_adaptive_gripping, 
+                args=(motor_control, motor, percentage, 0.3)  # Use 0.3 rad/s for adaptive gripping
+            )
+            grip_thread.daemon = True
+            state.gripping_thread = grip_thread  # Store reference to thread
+            grip_thread.start()
+        else:
+            # Direct movement for opening
+            motor_control.control_Pos_Vel(motor, safe_pos, 0.3)  # Use 0.3 rad/s for opening too
+            state.last_gripper_msg = f"Moving to {percentage:.1f}% closed ({safe_pos:.3f} rad)"
         
     except Exception as e:
         state.last_gripper_msg = f"ERR: Gripper move failed: {e}"
@@ -236,10 +507,34 @@ def update_display():
     
     print("-" * 60)
     
+    # Sensor status
+    sensor_status = "Connected" if state.sensor_connected else "Disconnected"
+    if not SENSOR_AVAILABLE:
+        sensor_status = "Not Available"
+    
+    print("DEPTH SENSOR:")
+    print(f"  Max Intensity: {state.max_depth_intensity:.3f}")
+    print(f"  Baseline: {state.baseline_intensity:.3f} | Net: {state.net_intensity:.3f}")
+    print(f"  Status: {sensor_status}")
+    
+    print("-" * 60)
+    
+    # Adaptive gripping status
+    gripping_status = "Active" if state.is_gripping else "Inactive"
+    
+    print("ADAPTIVE GRIPPING:")
+    print(f"  Threshold: {state.gripping_threshold:.3f}")
+    if state.is_gripping:
+        print(f"  Net Intensity: {state.net_intensity:.3f} / {state.gripping_threshold:.3f}")
+        print(f"  Will Stop: {state.net_intensity > state.gripping_threshold}")
+    
+    print("-" * 60)
+    
     # Controls
     print("CONTROLS:")
     print("  Rotation:  [A/D] Rotate | [W/S] Speed | [Q/E] Step Size")
-    print("  Gripper:   [O] Open | [C] Close")
+    print("  Gripper:   [O] Open | [C] Close (Adaptive)")
+    print("  Sensor:    [B] Calibrate Baseline")
     print("  General:   [SPACE] STOP | [R] Reset Pos | [ESC] Quit")
     print("=" * 60)
 
@@ -270,8 +565,19 @@ def on_press(key):
         # --- Gripper Controls ---
         elif key.char == 'o':  # Open gripper fully
             move_gripper_to_percentage(gripper_motor_control, gripper_motor, 0)
-        elif key.char == 'c':  # Close gripper fully
-            move_gripper_to_percentage(gripper_motor_control, gripper_motor, 100)
+        elif key.char == 'c':  # Close gripper (adaptive)
+            # Add a small delay to prevent double-press issues
+            if not state.is_gripping:
+                move_gripper_to_percentage(gripper_motor_control, gripper_motor, 100)
+            else:
+                state.last_gripper_msg = "Gripping already in progress"
+
+        # --- Sensor Controls ---
+        elif key.char == 'b':  # Calibrate baseline intensity
+            if sensor:
+                calibrate_baseline_intensity(sensor)
+            else:
+                state.last_sensor_msg = "ERR: Sensor not connected"
 
         # --- Utility Commands ---
         elif key.char == 'r':  # Reset stepper position to center
@@ -291,12 +597,13 @@ def on_press(key):
 
 # --- Main Execution ---
 def main():
-    global stepper_ser, gripper_motor, gripper_motor_control, gripper_serial_port
+    global stepper_ser, gripper_motor, gripper_motor_control, gripper_serial_port, sensor
     
     stepper_ser = None
     gripper_motor = None
     gripper_motor_control = None
     gripper_serial_port = None
+    sensor = None
     
     try:
         print("Initializing Complete Gripper Control System...")
@@ -322,6 +629,21 @@ def main():
         else:
             print("❌ DM motor library not available - gripper control disabled")
 
+        # --- Setup Sensor Connection ---
+        if SENSOR_AVAILABLE:
+            sensor = setup_sensor()
+            if sensor:
+                print("✓ Depth sensor connected")
+                # Calibrate baseline intensity when sensor is first initialized
+                print("Calibrating baseline intensity...")
+                if calibrate_baseline_intensity(sensor):
+                    print("✓ Baseline intensity calibrated")
+                else:
+                    print("⚠ Baseline calibration failed")
+            else:
+                print("❌ Depth sensor setup failed")
+        else:
+            print("❌ Sensor library not available - depth sensing disabled")
 
 
         # Start the background thread for reading stepper serial messages
@@ -337,6 +659,17 @@ def main():
 
             # Move stepper to starting center position
             send_stepper_move_command(stepper_ser, CONFIG["initial_pos"], CONFIG["initial_pos"], state.speed)
+
+        # Start the background thread for reading sensor data
+        if sensor and state.sensor_connected:
+            sensor_reader_thread = threading.Thread(target=sensor_reader, args=(sensor, state))
+            sensor_reader_thread.daemon = True
+            sensor_reader_thread.start()
+            print("✓ Sensor reader thread started")
+            
+            # Give sensor reader time to start and get initial readings
+            print("Waiting for sensor to stabilize...")
+            time.sleep(1.0)  # Allow sensor reader to start and get initial data
 
         # Initialize gripper to open position
         if gripper_motor and gripper_motor_control:
@@ -408,6 +741,15 @@ def main():
             try:
                 gripper_serial_port.close()
                 print("✓ Gripper serial port closed")
+            except:
+                pass
+        
+        # Clean shutdown of sensor
+        if sensor and state.sensor_connected:
+            try:
+                print("Disconnecting sensor...")
+                sensor.disconnect()
+                print("✓ Sensor disconnected")
             except:
                 pass
         

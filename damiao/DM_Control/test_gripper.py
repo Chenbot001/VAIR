@@ -27,7 +27,7 @@ from DM_CAN import *
 # Gripper position limits (in radians)
 GRIPPER_MIN_POS = -1.35  # Fully closed position
 GRIPPER_MAX_POS = 0.0    # Fully open position
-DEFAULT_VELOCITY = 2.0   # Default movement velocity
+DEFAULT_VELOCITY = 0.3   # Default movement velocity
 
 def percentage_to_position(percentage):
     """

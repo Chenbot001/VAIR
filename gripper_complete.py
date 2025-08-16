@@ -102,7 +102,7 @@ class SystemState:
         
         # Adaptive gripping state
         self.adaptive_gripping_enabled = True
-        self.gripping_threshold = 0.2  # Lower threshold for more sensitive detection
+        self.gripping_threshold = 0.5  # Lower threshold for more sensitive detection
         self.is_gripping = False       # Whether currently in gripping operation
         self.gripping_started = False  # Whether gripping operation has started
         self.gripping_thread = None    # Reference to the gripping thread

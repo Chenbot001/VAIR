@@ -2,7 +2,7 @@
 ROTARY ENCODER REGRESSION ANALYSIS RESULTS SUMMARY
 ================================================================================
 
-Analysis Date: 2025-08-18 20:40:46
+Analysis Date: 2025-08-19 15:05:20
 Speed: 50
 Comparison Diameter: 3mm
 
@@ -11,18 +11,18 @@ CLOCKWISE (CW) DIRECTION RESULTS
 ==================================================
 
 2mm Diameter:
-  Slope: 1.541518 degrees/step
-  Steps per degree: 0.648711
-  Intercept: -3.191634
-  R-squared (R²): 0.999955
+  Slope: 1.533644 degrees/step
+  Steps per degree: 0.652042
+  Intercept: -1.474587
+  R-squared (R²): 0.999943
   Data points: 12
 
 3mm Diameter:
-  Slope: 1.004918 degrees/step
-  Steps per degree: 0.995106
-  Intercept: -0.106124
-  R-squared (R²): 0.999864
-  Data points: 21
+  Slope: 1.011895 degrees/step
+  Steps per degree: 0.988245
+  Intercept: -0.619942
+  R-squared (R²): 0.999691
+  Data points: 15
 
 4mm Diameter:
   Slope: 0.783251 degrees/step
@@ -43,18 +43,18 @@ COUNTER-CLOCKWISE (CCW) DIRECTION RESULTS
 ==================================================
 
 2mm Diameter:
-  Slope: 1.546111 degrees/step
-  Steps per degree: 0.646784
-  Intercept: -3.512450
-  R-squared (R²): 0.999985
+  Slope: 1.530538 degrees/step
+  Steps per degree: 0.653365
+  Intercept: -0.165916
+  R-squared (R²): 0.999795
   Data points: 12
 
 3mm Diameter:
-  Slope: 1.003899 degrees/step
-  Steps per degree: 0.996116
-  Intercept: 0.396660
-  R-squared (R²): 0.999880
-  Data points: 21
+  Slope: 1.005681 degrees/step
+  Steps per degree: 0.994351
+  Intercept: 0.255194
+  R-squared (R²): 0.999728
+  Data points: 15
 
 4mm Diameter:
   Slope: 0.773520 degrees/step
@@ -75,32 +75,32 @@ CW vs CCW COMPARISON (3mm DIAMETER)
 ==================================================
 
 CW Direction:
-  Slope: 1.004918 degrees/step
-  Steps per degree: 0.995106
-  R-squared (R²): 0.999864
-  Data points: 21
+  Slope: 1.011895 degrees/step
+  Steps per degree: 0.988245
+  R-squared (R²): 0.999691
+  Data points: 15
 
 CCW Direction:
-  Slope: 1.003899 degrees/step
-  Steps per degree: 0.996116
-  R-squared (R²): 0.999880
-  Data points: 21
+  Slope: 1.005681 degrees/step
+  Steps per degree: 0.994351
+  R-squared (R²): 0.999728
+  Data points: 15
 
 Differences:
-  Slope difference: 0.001018 degrees/step
-  Steps per degree difference: 0.001009
-  Percentage difference in slope: 0.10%
+  Slope difference: 0.006214 degrees/step
+  Steps per degree difference: 0.006106
+  Percentage difference in slope: 0.61%
 
 ==================================================
 SUMMARY STATISTICS
 ==================================================
 
-CW Direction - Average steps per degree: 1.140982
-CCW Direction - Average steps per degree: 1.143659
-Overall average steps per degree: 1.142321
+CW Direction - Average steps per degree: 1.140100
+CCW Direction - Average steps per degree: 1.144863
+Overall average steps per degree: 1.142481
 
-Best fit CW: 2mm diameter (R² = 0.999955)
-Best fit CCW: 2mm diameter (R² = 0.999985)
+Best fit CW: 2mm diameter (R² = 0.999943)
+Best fit CCW: 5mm diameter (R² = 0.999919)
 
 ================================================================================
 END OF REPORT

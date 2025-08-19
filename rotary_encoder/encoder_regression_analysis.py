@@ -327,29 +327,33 @@ def analyze_encoder_data(csv_path, diameter=None, speed=None, direction=None):
         'data': data
     }
 
-def plot_multiple_diameters_cw(csv_path, speed=50, save_plots=True):
+def plot_single_direction_all_diameters(csv_path, direction, speed=50, save_plots=True):
     """
-    Create scatter plots and regression lines for CW direction with diameters 2-5mm at specified speed.
+    Create a single plot showing all diameters (2-5mm) for a specified direction.
+    Each diameter is represented by a different color with its own regression line.
     
     Args:
         csv_path (str): Path to the CSV file
+        direction (str): Direction ('cw' or 'ccw')
         speed (int): Speed value to filter by
         save_plots (bool): Whether to save the plots
     """
     diameters = [2, 3, 4, 5]
-    fig, axes = plt.subplots(2, 2, figsize=(15, 12))
-    axes = axes.flatten()
+    colors = ['blue', 'red', 'green', 'orange']  # One color per diameter
+    
+    plt.figure(figsize=(12, 8))
     
     results = {}
+    legend_elements = []
     
     for i, diameter in enumerate(diameters):
+        color = colors[i]
+        
         # Load and filter data
-        data = load_and_filter_data(csv_path, diameter=diameter, speed=speed, direction='cw')
+        data = load_and_filter_data(csv_path, diameter=diameter, speed=speed, direction=direction)
         
         if data.empty:
-            axes[i].text(0.5, 0.5, f'No data for {diameter}mm CW', 
-                        ha='center', va='center', transform=axes[i].transAxes)
-            axes[i].set_title(f'{diameter}mm Diameter - CW Direction')
+            print(f"No data for {diameter}mm {direction.upper()}")
             continue
         
         # Perform regression
@@ -362,41 +366,165 @@ def plot_multiple_diameters_cw(csv_path, speed=50, save_plots=True):
             'intercept': intercept,
             'r2': r2,
             'steps_per_degree': steps_per_degree,
-            'data_points': len(data)
+            'data_points': len(data),
+            'color': color
         }
         
-        # Create scatter plot
-        axes[i].scatter(data['step'], data['angle'], alpha=0.6, s=30, color='blue', label='Data Points')
+        # Create scatter plot for this diameter
+        plt.scatter(data['step'], data['angle'], alpha=0.6, s=40, color=color, 
+                   label=f'{diameter}mm Data (R² = {r2:.3f})')
         
-        # Create regression line
+        # Create regression line for this diameter
         x_range = np.linspace(data['step'].min(), data['step'].max(), 100)
         y_pred = slope * x_range + intercept
-        axes[i].plot(x_range, y_pred, 'r-', linewidth=2, 
-                    label=f'Regression (R² = {r2:.3f})')
-        
-        # Customize subplot
-        axes[i].set_xlabel('Steps', fontsize=10)
-        axes[i].set_ylabel('Angle (degrees)', fontsize=10)
-        axes[i].set_title(f'{diameter}mm Diameter - CW Direction\nSpeed: {speed}', fontsize=12)
-        axes[i].legend()
-        axes[i].grid(True, alpha=0.3)
-        
-        # Add equation text with steps per degree
-        equation_text = f'Slope: {slope:.3f} deg/step\nSteps per degree: {steps_per_degree:.3f}'
-        axes[i].text(0.05, 0.95, equation_text, transform=axes[i].transAxes, 
-                    bbox=dict(boxstyle="round,pad=0.3", facecolor="lightblue", alpha=0.7),
-                    fontsize=9, verticalalignment='top')
+        plt.plot(x_range, y_pred, color=color, linewidth=2, linestyle='--',
+                label=f'{diameter}mm Regression (slope = {slope:.3f})')
+    
+    # Customize plot
+    plt.xlabel('Steps', fontsize=12)
+    plt.ylabel('Angle (degrees)', fontsize=12)
+    plt.title(f'{direction.upper()} Direction - All Diameters (Speed: {speed})', fontsize=14)
+    plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.grid(True, alpha=0.3)
+    
+    # Add summary text box with steps per degree for each diameter
+    summary_text = f'{direction.upper()} Direction Steps/Degree:\n'
+    for diameter_key, result in results.items():
+        summary_text += f'{diameter_key}: {result["steps_per_degree"]:.3f}\n'
+    
+    plt.text(0.02, 0.98, summary_text, transform=plt.gca().transAxes, 
+            bbox=dict(boxstyle="round,pad=0.3", facecolor="lightgray", alpha=0.8),
+            fontsize=10, verticalalignment='top')
     
     plt.tight_layout()
-    plt.suptitle(f'Angle vs Steps Regression - CW Direction (Speed: {speed})', fontsize=16, y=1.02)
     
     if save_plots:
-        filename = f'rotary_encoder/cw_direction_speed{speed}_diameters_2-5mm.png'
+        filename = f'rotary_encoder/{direction}_all_diameters_speed{speed}.png'
         plt.savefig(filename, dpi=300, bbox_inches='tight')
         print(f"Saved plot: {filename}")
     
     plt.show()
     return results
+
+def plot_both_directions_all_diameters(csv_path, speed=50, save_plots=True):
+    """
+    Create two plots side by side - one for CW and one for CCW direction.
+    Each plot shows all diameters (2-5mm) with different colors and regression lines.
+    
+    Args:
+        csv_path (str): Path to the CSV file
+        speed (int): Speed value to filter by
+        save_plots (bool): Whether to save the plots
+    """
+    diameters = [2, 3, 4, 5]
+    colors = ['blue', 'red', 'green', 'orange']  # One color per diameter
+    
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 8))
+    
+    all_results = {'cw': {}, 'ccw': {}}
+    
+    # Plot CW direction
+    for i, diameter in enumerate(diameters):
+        color = colors[i]
+        
+        # Load and filter data for CW
+        data_cw = load_and_filter_data(csv_path, diameter=diameter, speed=speed, direction='cw')
+        
+        if not data_cw.empty:
+            # Perform regression
+            slope, intercept, r2, model = perform_linear_regression(data_cw)
+            steps_per_degree = 1 / slope if slope != 0 else float('inf')
+            
+            # Store results
+            all_results['cw'][f'{diameter}mm'] = {
+                'slope': slope,
+                'intercept': intercept,
+                'r2': r2,
+                'steps_per_degree': steps_per_degree,
+                'data_points': len(data_cw)
+            }
+            
+            # Create scatter plot
+            ax1.scatter(data_cw['step'], data_cw['angle'], alpha=0.6, s=40, color=color, 
+                       label=f'{diameter}mm (R² = {r2:.3f})')
+            
+            # Create regression line
+            x_range = np.linspace(data_cw['step'].min(), data_cw['step'].max(), 100)
+            y_pred = slope * x_range + intercept
+            ax1.plot(x_range, y_pred, color=color, linewidth=2, linestyle='--')
+    
+    # Plot CCW direction
+    for i, diameter in enumerate(diameters):
+        color = colors[i]
+        
+        # Load and filter data for CCW
+        data_ccw = load_and_filter_data(csv_path, diameter=diameter, speed=speed, direction='ccw')
+        
+        if not data_ccw.empty:
+            # Perform regression
+            slope, intercept, r2, model = perform_linear_regression(data_ccw)
+            steps_per_degree = 1 / slope if slope != 0 else float('inf')
+            
+            # Store results
+            all_results['ccw'][f'{diameter}mm'] = {
+                'slope': slope,
+                'intercept': intercept,
+                'r2': r2,
+                'steps_per_degree': steps_per_degree,
+                'data_points': len(data_ccw)
+            }
+            
+            # Create scatter plot
+            ax2.scatter(data_ccw['step'], data_ccw['angle'], alpha=0.6, s=40, color=color, 
+                       label=f'{diameter}mm (R² = {r2:.3f})')
+            
+            # Create regression line
+            x_range = np.linspace(data_ccw['step'].min(), data_ccw['step'].max(), 100)
+            y_pred = slope * x_range + intercept
+            ax2.plot(x_range, y_pred, color=color, linewidth=2, linestyle='--')
+    
+    # Customize CW plot
+    ax1.set_xlabel('Steps', fontsize=12)
+    ax1.set_ylabel('Angle (degrees)', fontsize=12)
+    ax1.set_title(f'CW Direction - All Diameters (Speed: {speed})', fontsize=14)
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+    
+    # Add CW summary text
+    if all_results['cw']:
+        cw_summary = 'CW Steps/Degree:\n'
+        for diameter_key, result in all_results['cw'].items():
+            cw_summary += f'{diameter_key}: {result["steps_per_degree"]:.3f}\n'
+        ax1.text(0.02, 0.98, cw_summary, transform=ax1.transAxes, 
+                bbox=dict(boxstyle="round,pad=0.3", facecolor="lightblue", alpha=0.8),
+                fontsize=10, verticalalignment='top')
+    
+    # Customize CCW plot
+    ax2.set_xlabel('Steps', fontsize=12)
+    ax2.set_ylabel('Angle (degrees)', fontsize=12)
+    ax2.set_title(f'CCW Direction - All Diameters (Speed: {speed})', fontsize=14)
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+    
+    # Add CCW summary text
+    if all_results['ccw']:
+        ccw_summary = 'CCW Steps/Degree:\n'
+        for diameter_key, result in all_results['ccw'].items():
+            ccw_summary += f'{diameter_key}: {result["steps_per_degree"]:.3f}\n'
+        ax2.text(0.02, 0.98, ccw_summary, transform=ax2.transAxes, 
+                bbox=dict(boxstyle="round,pad=0.3", facecolor="lightgreen", alpha=0.8),
+                fontsize=10, verticalalignment='top')
+    
+    plt.tight_layout()
+    
+    if save_plots:
+        filename = f'rotary_encoder/both_directions_all_diameters_speed{speed}.png'
+        plt.savefig(filename, dpi=300, bbox_inches='tight')
+        print(f"Saved plot: {filename}")
+    
+    plt.show()
+    return all_results
+    
 
 def plot_multiple_diameters_ccw(csv_path, speed=50, save_plots=True):
     """
@@ -703,22 +831,32 @@ if __name__ == "__main__":
     
     print("="*50 + "\n")
     
-    # Visualization 1: CW direction plots for diameters 2-5mm at speed 50
-    print("1. Generating CW direction plots for diameters 2-5mm at speed 50...")
-    cw_results = plot_multiple_diameters_cw(csv_path, speed=50, save_plots=True)
+    # Visualization 1: Single plot for CW direction with all diameters
+    print("1. Generating CW direction plot with all diameters at speed 50...")
+    cw_results = plot_single_direction_all_diameters(csv_path, 'cw', speed=50, save_plots=True)
     
-    # Visualization 2: CCW direction plots for diameters 2-5mm at speed 50
-    print("\n2. Generating CCW direction plots for diameters 2-5mm at speed 50...")
-    ccw_results = plot_multiple_diameters_ccw(csv_path, speed=50, save_plots=True)
+    # Visualization 2: Single plot for CCW direction with all diameters
+    print("\n2. Generating CCW direction plot with all diameters at speed 50...")
+    ccw_results = plot_single_direction_all_diameters(csv_path, 'ccw', speed=50, save_plots=True)
     
-    # Visualization 3: CW vs CCW comparison for 3mm diameter at speed 50
-    print("\n3. Generating CW vs CCW comparison for 3mm diameter at speed 50...")
+    # Visualization 3: Side-by-side plots for both directions
+    print("\n3. Generating side-by-side plots for both directions with all diameters...")
+    both_results = plot_both_directions_all_diameters(csv_path, speed=50, save_plots=True)
+    
+    # Visualization 4: CW vs CCW comparison for 3mm diameter at speed 50 (keeping this for detailed comparison)
+    print("\n4. Generating CW vs CCW comparison for 3mm diameter at speed 50...")
     comparison_results = plot_cw_ccw_comparison(csv_path, diameter=3, speed=50, save_plots=True)
     
     # Create results summary
-    print("\n4. Creating results summary...")
+    print("\n5. Creating results summary...")
     summary_file = create_results_summary(cw_results, ccw_results, comparison_results, speed=50, diameter=3)
     
     print("\n" + "="*50)
     print("All visualizations and summary completed!")
+    print("Files generated:")
+    print("- rotary_encoder/cw_all_diameters_speed50.png")
+    print("- rotary_encoder/ccw_all_diameters_speed50.png") 
+    print("- rotary_encoder/both_directions_all_diameters_speed50.png")
+    print("- rotary_encoder/ccw_comparison_3mm_speed50.png")
+    print("- rotary_encoder/encoder_regression_results_summary.txt")
     print("="*50)

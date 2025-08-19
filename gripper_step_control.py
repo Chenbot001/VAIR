@@ -76,7 +76,7 @@ CONFIG = {
 }
 
 # Gripper position limits (in radians)
-GRIPPER_MIN_POS = -1.35  # Fully closed position
+GRIPPER_MIN_POS = -1.38  # Fully closed position
 GRIPPER_MAX_POS = 0.0    # Fully open position
 
 # --- State Tracking ---
@@ -250,7 +250,7 @@ def check_gripping_condition():
     # Use the same threshold logic as the working script
     return state.net_intensity > state.gripping_threshold
 
-def handle_adaptive_gripping(motor_control, motor, target_percentage, velocity=0.3):
+def handle_adaptive_gripping(motor_control, motor, target_percentage, velocity=0.1):
     """
     Handle adaptive gripping by continuously monitoring sensor and stopping when object detected.
     Based on the working trigger_teleop_fb.py approach.
@@ -424,7 +424,7 @@ def setup_gripper():
         state.last_gripper_msg = f"ERR: Gripper setup failed: {e}"
         return None, None, None
 
-def move_gripper_to_percentage(motor_control, motor, percentage, velocity=0.3):
+def move_gripper_to_percentage(motor_control, motor, percentage, velocity=0.1):
     """
     Move gripper to a specific closure percentage with adaptive gripping for closing operations.
     
@@ -459,7 +459,7 @@ def move_gripper_to_percentage(motor_control, motor, percentage, velocity=0.3):
             import threading
             grip_thread = threading.Thread(
                 target=handle_adaptive_gripping, 
-                args=(motor_control, motor, percentage, 0.3)  # Use 0.3 rad/s for adaptive gripping
+                args=(motor_control, motor, percentage, velocity)  # Use 0.1 rad/s for adaptive gripping
             )
             grip_thread.daemon = True
             state.gripping_thread = grip_thread  # Store reference to thread

@@ -6,7 +6,7 @@ Integrated control for both stepper motor rotation and DM motor gripper actuatio
 This script combines:
 - Stepper motor control for gripper rotation (via Arduino) with angle-based positioning
 - DM motor control for gripper open/close (via CAN)
-- Depth sensor integration for object detection
+- Depth sensor integration for object detection with visual feedback
 - Object diameter-based calibration for precise angle control
 
 Stepper Motor Controls:
@@ -19,9 +19,12 @@ Gripper Controls:
 - [O] Open gripper fully
 - [C] Close gripper fully
 
+Sensor Controls:
+- [B] Calibrate baseline intensity
+
 General Controls:
 - [SPACE] STOP all motors
-- [R] Reset stepper position to center
+- [Z] Reset stepper position to center
 - [ESC] Quit program
 """
 
@@ -33,6 +36,7 @@ import sys
 import math
 import cv2
 import numpy as np
+
 
 from pynput import keyboard
 
@@ -60,15 +64,15 @@ except ImportError:
 ENCODER_CALIBRATION = {
     # Clockwise direction
     'cw': {
-        2: 0.648711,  # steps per degree
-        3: 0.995106,
+        2: 0.652042,  # steps per degree
+        3: 0.988245,
         4: 1.276730,
         5: 1.643381
     },
     # Counter-clockwise direction  
     'ccw': {
-        2: 0.646784,  # steps per degree
-        3: 0.996116,
+        2: 0.653365,  # steps per degree
+        3: 0.994351,
         4: 1.292792,
         5: 1.638945
     }
@@ -87,8 +91,9 @@ CONFIG = {
     # Angle-based control configuration
     "min_diameter_mm": 1,
     "max_diameter_mm": 5,
-    "initial_diameter_mm": 3,
+    "initial_diameter_mm": 2,
     "angle_increment_deg": 5,
+    "initial_target_angle_deg": 90,  # Default target angle setting
     "max_angle_deg": 180,  # Maximum rotation angle from center
     
     # Gripper motor configuration
@@ -102,7 +107,7 @@ CONFIG = {
 }
 
 # Gripper position limits (in radians)
-GRIPPER_MIN_POS = -1.35  # Fully closed position
+GRIPPER_MIN_POS = -1.38  # Fully closed position
 GRIPPER_MAX_POS = 0.0    # Fully open position
 
 # --- State Tracking ---
@@ -116,7 +121,7 @@ class SystemState:
         
         # Angle-based control state
         self.current_angle_deg = 0.0  # Current angle from center position
-        self.target_angle_deg = CONFIG["angle_increment_deg"]  # Target angle increment
+        self.target_angle_deg = CONFIG["initial_target_angle_deg"]  # Target angle increment
         self.object_diameter_mm = CONFIG["initial_diameter_mm"]  # Current object diameter
         
         # Gripper state
@@ -129,6 +134,12 @@ class SystemState:
         self.net_intensity = 0.0       # Net increase in intensity (current - baseline)
         self.sensor_connected = False
         self.last_sensor_msg = ""
+        
+        # Sensor image display state
+        self.display_sensor_images = True  # Always display sensor images when available
+        self.sensor_fps = 0.0  # Sensor reading FPS
+        self.frame_count = 0  # Frame counter for FPS calculation
+        self.fps_start_time = 0.0  # Start time for FPS calculation
         
         # Adaptive gripping state
         self.adaptive_gripping_enabled = True
@@ -336,7 +347,7 @@ def calibrate_baseline_intensity(sensor, samples=10):
         return False
     
     try:
-        print("Calibrating baseline intensity...")
+        # print("Calibrating baseline intensity...")
         total_intensity = 0.0
         valid_samples = 0
         
@@ -360,6 +371,87 @@ def calibrate_baseline_intensity(sensor, samples=10):
     except Exception as e:
         state.last_sensor_msg = f"ERR: Calibration failed: {e}"
         return False
+
+def display_sensor_images(sensor):
+    """
+    Display concatenated sensor images including depth, deformation, and shear in a single window.
+    Based on the implementation from main.py.
+    
+    Args:
+        sensor: The sensor object from dmrobotics
+    """
+    if not sensor or not SENSOR_AVAILABLE or not state.display_sensor_images:
+        return
+    
+    try:
+        # Get sensor data
+        img = sensor.getRawImage()
+        depth = sensor.getDepth()  # output the deformed depth
+        deformation = sensor.getDeformation2D()
+        shear = sensor.getShear()
+        
+        # Create depth image with color mapping
+        depth_img = cv2.applyColorMap((depth * 0.25 * 255.0).astype('uint8'), cv2.COLORMAP_HOT)
+        
+        # Create black background for deformation and shear arrows
+        black_img = np.zeros_like(img)
+        black_img = np.stack([black_img] * 3, axis=-1)
+        
+        # Create deformation and shear images
+        deformation_img = put_arrows_on_image(black_img.copy(), deformation * 20)
+        shear_img = put_arrows_on_image(black_img.copy(), shear * 20)
+        
+        # Ensure all images have the same height for concatenation
+        height = depth_img.shape[0]
+        width = depth_img.shape[1]
+        
+        # Resize deformation and shear images to match depth image dimensions if needed
+        if deformation_img.shape[:2] != (height, width):
+            deformation_img = cv2.resize(deformation_img, (width, height))
+        if shear_img.shape[:2] != (height, width):
+            shear_img = cv2.resize(shear_img, (width, height))
+        
+        # Add text labels to each image
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 0.7
+        font_color = (255, 255, 255)
+        thickness = 2
+        
+        # Add labels
+        cv2.putText(depth_img, 'Depth', (10, 30), font, font_scale, font_color, thickness)
+        cv2.putText(deformation_img, 'Deformation', (10, 30), font, font_scale, font_color, thickness)
+        cv2.putText(shear_img, 'Shear', (10, 30), font, font_scale, font_color, thickness)
+        
+        # Concatenate images horizontally
+        combined_img = np.hstack([depth_img, deformation_img, shear_img])
+        
+        # Display the combined image
+        cv2.imshow('Sensor Data - Depth | Deformation | Shear', combined_img)
+        
+        # Update FPS calculation
+        state.frame_count += 1
+        current_time = time.time()
+        if current_time - state.fps_start_time > 1.0:
+            state.sensor_fps = state.frame_count / (current_time - state.fps_start_time)
+            state.frame_count = 0
+            state.fps_start_time = current_time
+        
+        # Check for window close events (non-blocking)
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord('r'):
+            # Reset sensor when 'r' is pressed in the sensor window
+            sensor.reset()
+            state.last_sensor_msg = "Sensor reset via image window"
+        
+    except Exception as e:
+        state.last_sensor_msg = f"ERR: Image display failed: {e}"
+
+def close_sensor_windows():
+    """Close the sensor image window"""
+    try:
+        cv2.destroyWindow('Sensor Data - Depth | Deformation | Shear')
+    except:
+        pass
 
 def start_adaptive_gripping():
     """Start an adaptive gripping operation"""
@@ -386,7 +478,7 @@ def check_gripping_condition():
     # Use the same threshold logic as the working script
     return state.net_intensity > state.gripping_threshold
 
-def handle_adaptive_gripping(motor_control, motor, target_percentage, velocity=0.3):
+def handle_adaptive_gripping(motor_control, motor, target_percentage, velocity=0.1):
     """
     Handle adaptive gripping by continuously monitoring sensor and stopping when object detected.
     Based on the working trigger_teleop_fb.py approach.
@@ -495,20 +587,32 @@ def stepper_reader(ser, state):
         time.sleep(0.05)
 
 def sensor_reader(sensor, state):
-    """Continuously reads from the sensor and updates depth intensity in the background."""
+    """Continuously reads from the sensor, updates depth intensity, and displays images in the background."""
+    # Initialize FPS tracking
+    state.fps_start_time = time.time()
+    state.frame_count = 0
+    
     while state.running:
         try:
             if sensor and state.sensor_connected:
+                # Get depth intensity for gripping logic
                 get_max_depth_intensity(sensor)
+                
+                # Display sensor images if enabled
+                display_sensor_images(sensor)
+                
                 # Read more frequently when gripping is active
                 if state.is_gripping:
                     time.sleep(0.01)  # 100Hz when gripping for maximum responsiveness
                 else:
-                    time.sleep(0.1)   # 10Hz when not gripping
+                    time.sleep(0.05)   # 20Hz when not gripping (increased from 10Hz for better image display)
         except Exception as e:
             state.last_sensor_msg = f"ERR: Sensor reading failed: {e}"
             state.sensor_connected = False
             break
+    
+    # Clean up image windows when exiting
+    close_sensor_windows()
 
 def send_stepper_command(ser, command):
     """Sends a command to the Arduino."""
@@ -590,7 +694,7 @@ def setup_gripper():
         state.last_gripper_msg = f"ERR: Gripper setup failed: {e}"
         return None, None, None
 
-def move_gripper_to_percentage(motor_control, motor, percentage, velocity=0.3):
+def move_gripper_to_percentage(motor_control, motor, percentage, velocity=0.1):
     """
     Move gripper to a specific closure percentage with adaptive gripping for closing operations.
     
@@ -625,7 +729,7 @@ def move_gripper_to_percentage(motor_control, motor, percentage, velocity=0.3):
             import threading
             grip_thread = threading.Thread(
                 target=handle_adaptive_gripping, 
-                args=(motor_control, motor, percentage, 0.3)  # Use 0.3 rad/s for adaptive gripping
+                args=(motor_control, motor, percentage, 0.1)  # Use 0.1 rad/s for adaptive gripping
             )
             grip_thread.daemon = True
             state.gripping_thread = grip_thread  # Store reference to thread
@@ -659,7 +763,7 @@ def update_display():
     print("ROTATION CONTROL (Angle-Based):")
     print(f"  Motor Position: M1={state.m1_target_pos:<4} | M2={state.m2_target_pos:<4}")
     print(f"  Current Angle:  {state.current_angle_deg:>6.1f}°")
-    print(f"  Target Angle:   {state.target_angle_deg:>6.1f}° increments")
+    print(f"  Target Angle:   {state.target_angle_deg:>6.1f}°")
     print(f"  Object Diameter: {state.object_diameter_mm}mm")
     print(f"  Steps/Degree:   CW={cw_steps_per_deg:.3f} | CCW={ccw_steps_per_deg:.3f}")
     print(f"  Speed (steps/s): {state.speed:<4}")
@@ -688,6 +792,8 @@ def update_display():
     print("DEPTH SENSOR:")
     print(f"  Max Intensity: {state.max_depth_intensity:.3f}")
     print(f"  Baseline: {state.baseline_intensity:.3f} | Net: {state.net_intensity:.3f}")
+    if state.sensor_connected:
+        print(f"  Sensor FPS: {state.sensor_fps:.1f}")
     print(f"  Status: {sensor_status}")
     
     print("-" * 60)
@@ -709,7 +815,7 @@ def update_display():
     print("  Diameter:  [J] -1mm | [K] +1mm (1-5mm range)")
     print("  Gripper:   [O] Open | [C] Close (Adaptive)")
     print("  Sensor:    [B] Calibrate Baseline")
-    print("  General:   [SPACE] STOP | [R] Reset Pos | [ESC] Quit")
+    print("  General:   [SPACE] STOP | [Z] Zero Pos | [ESC] Quit")
     print("=" * 60)
 
 # --- Keyboard Input Handling ---
@@ -762,7 +868,7 @@ def on_press(key):
                 state.last_sensor_msg = "ERR: Sensor not connected"
 
         # --- Utility Commands ---
-        elif key.char == 'r':  # Reset stepper position to center and angle
+        elif key.char == 'z':  # Reset stepper position to center and angle
             send_stepper_move_command(stepper_ser, CONFIG["initial_pos"], CONFIG["initial_pos"], state.speed)
             state.current_angle_deg = 0.0  # Reset angle tracking
 
@@ -931,6 +1037,8 @@ def main():
         if sensor and state.sensor_connected:
             try:
                 print("Disconnecting sensor...")
+                # Close image windows first
+                close_sensor_windows()
                 sensor.disconnect()
                 print("✓ Sensor disconnected")
             except:

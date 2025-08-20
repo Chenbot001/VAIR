@@ -2,7 +2,7 @@
 ROTARY ENCODER REGRESSION ANALYSIS RESULTS SUMMARY
 ================================================================================
 
-Analysis Date: 2025-08-19 15:05:20
+Analysis Date: 2025-08-20 13:17:29
 Speed: 50
 Comparison Diameter: 3mm
 
@@ -11,96 +11,96 @@ CLOCKWISE (CW) DIRECTION RESULTS
 ==================================================
 
 2mm Diameter:
-  Slope: 1.533644 degrees/step
-  Steps per degree: 0.652042
-  Intercept: -1.474587
-  R-squared (R²): 0.999943
-  Data points: 12
+  Slope: 1.532091 degrees/step
+  Steps per degree: 0.652703
+  Intercept: -0.820252
+  R-squared (R²): 0.999846
+  Data points: 24
 
 3mm Diameter:
-  Slope: 1.011895 degrees/step
-  Steps per degree: 0.988245
-  Intercept: -0.619942
-  R-squared (R²): 0.999691
-  Data points: 15
+  Slope: 1.008788 degrees/step
+  Steps per degree: 0.991289
+  Intercept: -0.182374
+  R-squared (R²): 0.999697
+  Data points: 30
 
 4mm Diameter:
-  Slope: 0.783251 degrees/step
-  Steps per degree: 1.276730
-  Intercept: -1.261741
-  R-squared (R²): 0.999928
-  Data points: 12
+  Slope: 0.778385 degrees/step
+  Steps per degree: 1.284711
+  Intercept: -0.676762
+  R-squared (R²): 0.999795
+  Data points: 24
 
 5mm Diameter:
-  Slope: 0.608502 degrees/step
-  Steps per degree: 1.643381
-  Intercept: -0.726815
-  R-squared (R²): 0.999762
-  Data points: 12
+  Slope: 0.609325 degrees/step
+  Steps per degree: 1.641160
+  Intercept: -0.935924
+  R-squared (R²): 0.999829
+  Data points: 24
 
 ==================================================
 COUNTER-CLOCKWISE (CCW) DIRECTION RESULTS
 ==================================================
 
 2mm Diameter:
-  Slope: 1.530538 degrees/step
-  Steps per degree: 0.653365
-  Intercept: -0.165916
-  R-squared (R²): 0.999795
-  Data points: 12
+  Slope: 1.532091 degrees/step
+  Steps per degree: 0.652703
+  Intercept: -0.820252
+  R-squared (R²): 0.999846
+  Data points: 24
 
 3mm Diameter:
-  Slope: 1.005681 degrees/step
-  Steps per degree: 0.994351
-  Intercept: 0.255194
-  R-squared (R²): 0.999728
-  Data points: 15
+  Slope: 1.008788 degrees/step
+  Steps per degree: 0.991289
+  Intercept: -0.182374
+  R-squared (R²): 0.999697
+  Data points: 30
 
 4mm Diameter:
-  Slope: 0.773520 degrees/step
-  Steps per degree: 1.292792
-  Intercept: -0.091782
-  R-squared (R²): 0.999753
-  Data points: 12
+  Slope: 0.778385 degrees/step
+  Steps per degree: 1.284711
+  Intercept: -0.676762
+  R-squared (R²): 0.999795
+  Data points: 24
 
 5mm Diameter:
-  Slope: 0.610149 degrees/step
-  Steps per degree: 1.638945
-  Intercept: -1.145033
-  R-squared (R²): 0.999919
-  Data points: 12
+  Slope: 0.609325 degrees/step
+  Steps per degree: 1.641160
+  Intercept: -0.935924
+  R-squared (R²): 0.999829
+  Data points: 24
 
 ==================================================
 CW vs CCW COMPARISON (3mm DIAMETER)
 ==================================================
 
 CW Direction:
-  Slope: 1.011895 degrees/step
-  Steps per degree: 0.988245
-  R-squared (R²): 0.999691
-  Data points: 15
+  Slope: 1.008788 degrees/step
+  Steps per degree: 0.991289
+  R-squared (R²): 0.999697
+  Data points: 30
 
 CCW Direction:
-  Slope: 1.005681 degrees/step
-  Steps per degree: 0.994351
-  R-squared (R²): 0.999728
-  Data points: 15
+  Slope: 1.008788 degrees/step
+  Steps per degree: 0.991289
+  R-squared (R²): 0.999697
+  Data points: 30
 
 Differences:
-  Slope difference: 0.006214 degrees/step
-  Steps per degree difference: 0.006106
-  Percentage difference in slope: 0.61%
+  Slope difference: 0.000000 degrees/step
+  Steps per degree difference: 0.000000
+  Percentage difference in slope: 0.00%
 
 ==================================================
 SUMMARY STATISTICS
 ==================================================
 
-CW Direction - Average steps per degree: 1.140100
-CCW Direction - Average steps per degree: 1.144863
-Overall average steps per degree: 1.142481
+CW Direction - Average steps per degree: 1.142466
+CCW Direction - Average steps per degree: 1.142466
+Overall average steps per degree: 1.142466
 
-Best fit CW: 2mm diameter (R² = 0.999943)
-Best fit CCW: 5mm diameter (R² = 0.999919)
+Best fit CW: 2mm diameter (R² = 0.999846)
+Best fit CCW: 2mm diameter (R² = 0.999846)
 
 ================================================================================
 END OF REPORT

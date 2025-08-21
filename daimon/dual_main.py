@@ -7,8 +7,8 @@ This script accesses and displays results from two DM-Tac tactile sensors simult
 It provides visualization of depth, raw image, deformation, and shear data.
 
 Serial IDs:
-- Sensor 1: 21CAF26C (Device ID 0)
-- Sensor 2: 1EBE4E51 (Device ID 1)
+- Sensor 1: 1ebe4e51 (Device ID 0)
+- Sensor 2: 21caf26c (Device ID 1)
 
 Keys:
 - 'q': Exit the program

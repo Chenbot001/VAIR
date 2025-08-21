@@ -1,31 +1,46 @@
-# File: gripper_angle_control.py
+# File: gripper_angle_control_encoder.py
 """
-Angle-Based Gripper Control System
-----------------------------------
-Integrated control for both stepper motor rotation and DM motor gripper actuation.
-This script combines:
+Advanced Angle-Based Gripper Control System with Encoder Feedback
+----------------------------------------------------------------
+Integrated control system combining stepper motor rotation, DM motor gripper actuation,
+rotary encoder feedback, and depth sensor integration for precise robotic manipulation.
+
+This script provides:
 - Stepper motor control for gripper rotation (via Arduino) with angle-based positioning
-- DM motor control for gripper open/close (via CAN)
+- DM motor control for gripper open/close (via CAN) with adaptive gripping
+- Rotary encoder integration for real-time angle measurement and validation
 - Depth sensor integration for object detection with visual feedback
 - Object diameter-based calibration for precise angle control
+- Automatic encoder data recording during rotation operations
+- Real-time sensor image display (depth, deformation, shear)
 
 Stepper Motor Controls:
-- [A/D] Rotate gripper CCW/CW by target angle
+- [A/D] Rotate gripper CCW/CW by target angle (triggers encoder recording)
 - [W/S] Adjust rotation speed
 - [Q/E] Adjust target angle in 5° increments
-- [J/K] Adjust object diameter (1-5mm) for calibration
+- [2/3/4/5] Set object diameter (2-5mm) for calibration
 
 Gripper Controls:
 - [O] Open gripper fully
-- [C] Close gripper fully
+- [C] Close gripper with adaptive gripping (sensor-based object detection)
 
 Sensor Controls:
-- [B] Calibrate baseline intensity
+- [B] Calibrate baseline intensity for adaptive gripping
+
+Encoder Controls:
+- [Z] Zero rotary encoder position
 
 General Controls:
 - [SPACE] STOP all motors
-- [Z] Reset stepper position to center
+- [X] Reset stepper position to center and zero angle tracking
 - [ESC] Quit program
+
+Features:
+- Automatic 5-second encoder recording during rotation commands
+- Adaptive gripping stops when object detected via depth sensor
+- Real-time sensor visualization with depth, deformation, and shear data
+- Diameter-based angle calibration for different object sizes
+- Comprehensive live dashboard with all system status
 """
 
 import serial

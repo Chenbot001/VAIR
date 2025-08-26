@@ -257,7 +257,6 @@ class GripperControlSystem:
         print("ROTARY ENCODER:")
         print(f"  Status: {encoder_status}")
         print(f"  Recording: {recording_status} | Data Points: {data_count}")
-        print(f"  Direction: CW (Fixed)")
         print(f"  Last Message: {sensor_status['encoder']['last_message']}")
         
         # Display latest saved CSV data for debugging
@@ -267,7 +266,7 @@ class GripperControlSystem:
             direction = latest_data.get('direction', 'Unknown')
             consecutive_count = latest_data.get('consecutive_count', 0)
             count_display = f" | Count: {consecutive_count}" if consecutive_count > 0 else ""
-            print(f"  Last Operation: {direction.upper()} | Init={latest_data['initial_angle']}° | Target={latest_data['target_angle']}° | Measured={latest_data['measured_angle']}° | Error={latest_data['error']}° | {status_icon}{count_display}")
+            print(f"  Last Operation: {direction.upper()} | Init={latest_data['initial_angle']}° | Turn={latest_data['target_angle']}° | Measured={latest_data['measured_angle']}° | Error={latest_data['error']}° | {status_icon}{count_display}")
         else:
             print(f"  Last Operation: No data recorded yet")
         
@@ -386,9 +385,9 @@ class GripperControlSystem:
             
             # --- Speed Control ---
             elif key.char == 'w':
-                self.state.hardware.stepper.speed += 50
+                self.state.hardware.stepper.speed += 10
             elif key.char == 's':
-                self.state.hardware.stepper.speed = max(50, self.state.hardware.stepper.speed - 50)
+                self.state.hardware.stepper.speed = max(10, self.state.hardware.stepper.speed - 10)
                 
             # --- Target Adjustment (Angle or Steps) ---
             elif key.char == 'e':

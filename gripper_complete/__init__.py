@@ -15,7 +15,7 @@ Modules:
 __version__ = "1.0.0"
 __author__ = "Gripper Control System Team"
 
-from .main import GripperControlSystem, SystemState
+from .main_encoder import GripperControlSystem, SystemState
 from .hardware_manager import HardwareManager, StepperMotorManager, GripperMotorManager
 from .sensor_manager import SensorManager, DaimonManager, RotaryEncoderManager
 from .utils import (

@@ -705,6 +705,11 @@ class RotaryEncoderManager:
             print(f"⚠ Recording disabled: Gripper is open ({gripper_closure_percent:.1f}% closed)")
             return
         
+        # Check diameter constraint: only record for diameters >= 2mm
+        if self.recording_diameter < 2.0:
+            print(f"⚠ Recording disabled: Diameter {self.recording_diameter}mm < 2mm (manual data entry required for thin wires)")
+            return
+        
         if not self.is_recording:
             self.is_recording = True
             self.recorded_data = []
@@ -727,7 +732,7 @@ class RotaryEncoderManager:
                 self.recording_initial_angle = 0.0
                 print(f"📐 Using default initial angle: {self.recording_initial_angle:.1f}°")
                 
-            print(f"\n🎙️  Encoder recording started at {time.strftime('%H:%M:%S')}")
+            print(f"\n🎙️  Encoder recording started at {time.strftime('%H:%M:%S')} for {self.recording_diameter}mm diameter")
     
     def stop_encoder_recording(self):
         """Stop recording encoder data and save to file"""

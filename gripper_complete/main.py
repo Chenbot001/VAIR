@@ -11,10 +11,10 @@ import os
 
 from pynput import keyboard
 
-from config import CONFIG, DISPLAY_CONFIG, ADAPTIVE_GRIPPING_CONFIG
+from config import CONFIG, DISPLAY_CONFIG, ADAPTIVE_GRIPPING_CONFIG, MANUAL_TILT_CONFIG
 from hardware_manager import HardwareManager
 from sensor_manager import SensorManager
-from utils import get_steps_per_degree, calculate_expected_angle_from_motor_positions
+from utils import get_steps_per_degree
 
 
 class SystemState:
@@ -51,16 +51,6 @@ class SystemState:
         """Update diameter and automatically switch control mode"""
         self.object_diameter_mm = diameter_mm
         self.control_mode = self._determine_control_mode(diameter_mm)
-    
-    def update_encoder_recording_metadata(self, diameter, target_value, grip_strength):
-        """Update encoder recording metadata"""
-        self.sensors.encoder.recording_diameter = diameter
-        if self.control_mode == "angle":
-            self.sensors.encoder.recording_target_angle = target_value
-        else:
-            # For step mode, store target steps in the angle field for compatibility
-            self.sensors.encoder.recording_target_angle = target_value
-        self.sensors.encoder.recording_grip_strength = grip_strength
 
 
 class GripperControlSystem:
@@ -233,11 +223,16 @@ class GripperControlSystem:
         
         # Sensor status
         sensor_available = "Connected" if sensor_status['visuotactile']['connected'] else "Disconnected"
+        tilt_mode = "Manual" if MANUAL_TILT_CONFIG["enabled"] else "Auto"
+        tilt_value = MANUAL_TILT_CONFIG["current_value"] if MANUAL_TILT_CONFIG["enabled"] else (
+            sensor_status['visuotactile']['angle_offset'] if sensor_status['visuotactile']['angle_offset'] is not None else 0.0
+        )
         print("DEPTH SENSOR:")
         print(f"  Max Intensity: {sensor_status['visuotactile']['max_intensity']:.3f}")
         print(f"  Baseline: {sensor_status['visuotactile']['baseline']:.3f} | Net: {sensor_status['visuotactile']['net_intensity']:.3f}")
         if sensor_status['visuotactile']['connected']:
             print(f"  Sensor FPS: {sensor_status['visuotactile']['sensor_fps']:.1f}")
+        print(f"  Tilt Mode: {tilt_mode} | Angle: {tilt_value:.1f}°")
         print(f"  Status: {sensor_available}")
         
         print("-" * 60)
@@ -265,6 +260,17 @@ class GripperControlSystem:
         print(f"  Direction: CW (Fixed)")
         print(f"  Last Message: {sensor_status['encoder']['last_message']}")
         
+        # Display latest saved CSV data for debugging
+        latest_data = sensor_status['encoder']['latest_saved_data']
+        if latest_data['initial_angle'] is not None:
+            status_icon = "✅ SAVED" if latest_data['saved'] else "❌ DISCARDED"
+            direction = latest_data.get('direction', 'Unknown')
+            consecutive_count = latest_data.get('consecutive_count', 0)
+            count_display = f" | Count: {consecutive_count}" if consecutive_count > 0 else ""
+            print(f"  Last Operation: {direction.upper()} | Init={latest_data['initial_angle']}° | Target={latest_data['target_angle']}° | Measured={latest_data['measured_angle']}° | Error={latest_data['error']}° | {status_icon}{count_display}")
+        else:
+            print(f"  Last Operation: No data recorded yet")
+        
         print("-" * 60)
         
         # Controls
@@ -273,6 +279,7 @@ class GripperControlSystem:
         print("  Diameter:  [0] 0.2mm | [H] 0.5mm | [1] 1mm | [2/3/4/5] 2-5mm")
         print("  Gripper:   [O] Open | [C] Close (Adaptive)")
         print("  Sensor:    [B] Calibrate Baseline")
+        print("  Tilt:      [J] Decrease | [K] Increase | [T] Toggle Mode")
         print("  Encoder:   [Z] Zero")
         print("  General:   [SPACE] STOP | [X] Zero Motor Pos | [ESC] Quit")
         print("=" * 60)
@@ -283,94 +290,98 @@ class GripperControlSystem:
             # --- Stepper Motor Controls (Angle or Step based) ---
             if key.char == 'a':  # Rotate CCW
                 if self.state.control_mode == "angle":
+                    # Capture initial angle BEFORE sending move command to avoid race condition
+                    initial_angle = self.state.hardware.stepper.get_current_angle_stable()
+                    print(f"🚀 Starting CCW rotation: Initial angle = {initial_angle:.1f}°, Target = {self.state.target_angle_deg:.1f}°")
+                    
                     # Angle-based control for diameters 2-5mm
                     self.state.hardware.stepper.send_angle_move_command(
                         self.state.target_angle_deg, 'ccw', self.state.object_diameter_mm
                     )
-                    # Calculate expected angle from motor positions
-                    expected_angle = calculate_expected_angle_from_motor_positions(
-                        self.state.hardware.stepper.m1_target_pos,
-                        self.state.hardware.stepper.m2_target_pos,
-                        self.state.object_diameter_mm
-                    )
+                    
                     # Start encoder recording for 5 seconds
                     if self.state.sensors.encoder.connected:
-                        self.state.sensors.encoder.start_encoder_recording(
-                            'ccw', self.state.hardware.gripper.gripper_closure_percent, expected_angle
-                        )
-                        # Update recording metadata
-                        self.state.update_encoder_recording_metadata(
+                        # Update recording metadata first
+                        self.state.sensors.encoder.update_recording_metadata(
                             self.state.object_diameter_mm,
                             self.state.target_angle_deg,
-                            self.state.sensors.visuotactile.max_depth_intensity
+                            self.state.sensors.visuotactile.max_depth_intensity,
+                            self.state.sensors.visuotactile.get_rounded_tilt_angle()
+                        )
+                        # Start recording
+                        self.state.sensors.encoder.start_encoder_recording(
+                            'ccw', self.state.hardware.gripper.gripper_closure_percent, initial_angle
                         )
                 else:
+                    # Capture initial angle BEFORE sending move command to avoid race condition
+                    initial_angle = self.state.hardware.stepper.get_current_angle_stable()
+                    print(f"🚀 Starting CCW step move: Initial angle = {initial_angle:.1f}°, Target steps = {self.state.target_steps}")
+                    
                     # Step-based control for diameters ≤1mm
                     self.state.hardware.stepper.send_step_move_command(
                         self.state.target_steps, 'ccw'
                     )
-                    # Calculate expected angle from motor positions
-                    expected_angle = calculate_expected_angle_from_motor_positions(
-                        self.state.hardware.stepper.m1_target_pos,
-                        self.state.hardware.stepper.m2_target_pos,
-                        self.state.object_diameter_mm
-                    )
+                    
                     # Start encoder recording for 5 seconds
                     if self.state.sensors.encoder.connected:
-                        self.state.sensors.encoder.start_encoder_recording(
-                            'ccw', self.state.hardware.gripper.gripper_closure_percent, expected_angle
-                        )
-                        # Update recording metadata (use steps as target)
-                        self.state.update_encoder_recording_metadata(
+                        # Update recording metadata first (use steps as target)
+                        self.state.sensors.encoder.update_recording_metadata(
                             self.state.object_diameter_mm,
                             self.state.target_steps,  # Use steps instead of angle
-                            self.state.sensors.visuotactile.max_depth_intensity
+                            self.state.sensors.visuotactile.max_depth_intensity,
+                            self.state.sensors.visuotactile.get_rounded_tilt_angle()
+                        )
+                        # Start recording
+                        self.state.sensors.encoder.start_encoder_recording(
+                            'ccw', self.state.hardware.gripper.gripper_closure_percent, initial_angle
                         )
                     
             elif key.char == 'd':  # Rotate CW
                 if self.state.control_mode == "angle":
+                    # Capture initial angle BEFORE sending move command to avoid race condition
+                    initial_angle = self.state.hardware.stepper.get_current_angle_stable()
+                    print(f"🚀 Starting CW rotation: Initial angle = {initial_angle:.1f}°, Target = {self.state.target_angle_deg:.1f}°")
+                    
                     # Angle-based control for diameters 2-5mm
                     self.state.hardware.stepper.send_angle_move_command(
                         self.state.target_angle_deg, 'cw', self.state.object_diameter_mm
                     )
-                    # Calculate expected angle from motor positions
-                    expected_angle = calculate_expected_angle_from_motor_positions(
-                        self.state.hardware.stepper.m1_target_pos,
-                        self.state.hardware.stepper.m2_target_pos,
-                        self.state.object_diameter_mm
-                    )
+                    
                     # Start encoder recording for 5 seconds
                     if self.state.sensors.encoder.connected:
-                        self.state.sensors.encoder.start_encoder_recording(
-                            'cw', self.state.hardware.gripper.gripper_closure_percent, expected_angle
-                        )
-                        # Update recording metadata
-                        self.state.update_encoder_recording_metadata(
+                        # Update recording metadata first
+                        self.state.sensors.encoder.update_recording_metadata(
                             self.state.object_diameter_mm,
                             self.state.target_angle_deg,
-                            self.state.sensors.visuotactile.max_depth_intensity
+                            self.state.sensors.visuotactile.max_depth_intensity,
+                            self.state.sensors.visuotactile.get_rounded_tilt_angle()
+                        )
+                        # Start recording
+                        self.state.sensors.encoder.start_encoder_recording(
+                            'cw', self.state.hardware.gripper.gripper_closure_percent, initial_angle
                         )
                 else:
+                    # Capture initial angle BEFORE sending move command to avoid race condition
+                    initial_angle = self.state.hardware.stepper.get_current_angle_stable()
+                    print(f"🚀 Starting CW step move: Initial angle = {initial_angle:.1f}°, Target steps = {self.state.target_steps}")
+                    
                     # Step-based control for diameters ≤1mm
                     self.state.hardware.stepper.send_step_move_command(
                         self.state.target_steps, 'cw'
                     )
-                    # Calculate expected angle from motor positions
-                    expected_angle = calculate_expected_angle_from_motor_positions(
-                        self.state.hardware.stepper.m1_target_pos,
-                        self.state.hardware.stepper.m2_target_pos,
-                        self.state.object_diameter_mm
-                    )
-                    # Start encoder recording for 5 seconds
+                    
+                    # Start encoder recording for 5 secondscx
                     if self.state.sensors.encoder.connected:
-                        self.state.sensors.encoder.start_encoder_recording(
-                            'cw', self.state.hardware.gripper.gripper_closure_percent, expected_angle
-                        )
-                        # Update recording metadata (use steps as target)
-                        self.state.update_encoder_recording_metadata(
+                        # Update recording metadata first (use steps as target)
+                        self.state.sensors.encoder.update_recording_metadata(
                             self.state.object_diameter_mm,
                             self.state.target_steps,  # Use steps instead of angle
-                            self.state.sensors.visuotactile.max_depth_intensity
+                            self.state.sensors.visuotactile.max_depth_intensity,
+                            self.state.sensors.visuotactile.get_rounded_tilt_angle()
+                        )
+                        # Start recording
+                        self.state.sensors.encoder.start_encoder_recording(
+                            'cw', self.state.hardware.gripper.gripper_closure_percent, initial_angle
                         )
             
             # --- Speed Control ---
@@ -384,6 +395,9 @@ class GripperControlSystem:
                 if self.state.control_mode == "angle":
                     self.state.target_angle_deg += CONFIG["angle_increment_deg"]
                     self.state.target_angle_deg = min(self.state.target_angle_deg, CONFIG["max_angle_deg"])
+                    # Reset counter when target angle changes
+                    if self.state.sensors.encoder.connected:
+                        self.state.sensors.encoder.reset_consecutive_saves_counter()
                 else:
                     self.state.target_steps += CONFIG["step_increment"]
                     self.state.target_steps = min(self.state.target_steps, CONFIG["max_steps_movement"])
@@ -391,6 +405,9 @@ class GripperControlSystem:
                 if self.state.control_mode == "angle":
                     self.state.target_angle_deg = max(CONFIG["angle_increment_deg"], 
                                                    self.state.target_angle_deg - CONFIG["angle_increment_deg"])
+                    # Reset counter when target angle changes
+                    if self.state.sensors.encoder.connected:
+                        self.state.sensors.encoder.reset_consecutive_saves_counter()
                 else:
                     self.state.target_steps = max(CONFIG["step_increment"], 
                                                self.state.target_steps - CONFIG["step_increment"])
@@ -398,18 +415,39 @@ class GripperControlSystem:
             # --- Object Diameter Adjustment ---
             elif key.char == '0':
                 self.state.update_diameter_and_control_mode(0.2)
+                # Reset counter when diameter changes
+                if self.state.sensors.encoder.connected:
+                    self.state.sensors.encoder.reset_consecutive_saves_counter()
             elif key.char == 'h':
                 self.state.update_diameter_and_control_mode(0.5)  # 'h' for half (0.5mm)
+                # Reset counter when diameter changes
+                if self.state.sensors.encoder.connected:
+                    self.state.sensors.encoder.reset_consecutive_saves_counter()
             elif key.char == '1':
                 self.state.update_diameter_and_control_mode(1.0)
+                # Reset counter when diameter changes
+                if self.state.sensors.encoder.connected:
+                    self.state.sensors.encoder.reset_consecutive_saves_counter()
             elif key.char == '2':
                 self.state.update_diameter_and_control_mode(2)
+                # Reset counter when diameter changes
+                if self.state.sensors.encoder.connected:
+                    self.state.sensors.encoder.reset_consecutive_saves_counter()
             elif key.char == '3':
                 self.state.update_diameter_and_control_mode(3)
+                # Reset counter when diameter changes
+                if self.state.sensors.encoder.connected:
+                    self.state.sensors.encoder.reset_consecutive_saves_counter()
             elif key.char == '4':
                 self.state.update_diameter_and_control_mode(4)
+                # Reset counter when diameter changes
+                if self.state.sensors.encoder.connected:
+                    self.state.sensors.encoder.reset_consecutive_saves_counter()
             elif key.char == '5':
                 self.state.update_diameter_and_control_mode(5)
+                # Reset counter when diameter changes
+                if self.state.sensors.encoder.connected:
+                    self.state.sensors.encoder.reset_consecutive_saves_counter()
 
             # --- Gripper Controls ---
             elif key.char == 'o':  # Open gripper fully
@@ -431,6 +469,14 @@ class GripperControlSystem:
             elif key.char == 'z':  # Zero encoder
                 if self.state.sensors.encoder.instrument and self.state.sensors.encoder.connected:
                     self.state.sensors.encoder.zero_encoder()
+
+            # --- Tilt Controls ---
+            elif key.char == 'j':  # Decrease manual tilt
+                self.state.sensors.decrement_manual_tilt()
+            elif key.char == 'k':  # Increase manual tilt
+                self.state.sensors.increment_manual_tilt()
+            elif key.char == 't':  # Toggle tilt mode
+                self.state.sensors.toggle_manual_tilt_mode()
 
             # --- Utility Commands ---
             elif key.char == 'x':  # Reset stepper position to center and angle

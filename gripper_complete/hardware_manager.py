@@ -112,6 +112,13 @@ class StepperMotorManager:
         self.m1_target_pos = m1
         self.m2_target_pos = m2
     
+    def get_current_angle_stable(self):
+        """
+        Get a stable reading of the current angle without any race conditions.
+        This method returns the angle before any pending updates.
+        """
+        return self.current_angle_deg
+    
     def send_angle_move_command(self, angle_deg, direction, object_diameter_mm):
         """
         Send a move command based on angle and direction.
@@ -120,9 +127,15 @@ class StepperMotorManager:
             angle_deg: Target angle increment in degrees
             direction: 'cw' or 'ccw'
             object_diameter_mm: Object diameter for calibration
+            
+        Returns:
+            float: Initial angle before the movement starts
         """
         if not self.serial_connection or not self.serial_connection.is_open:
-            return
+            return self.current_angle_deg
+        
+        # Capture initial angle before any updates
+        initial_angle = self.current_angle_deg
         
         # Calculate new motor positions
         new_m1, new_m2 = calculate_motor_positions(
@@ -145,6 +158,8 @@ class StepperMotorManager:
             self.current_angle_deg -= 360
         elif self.current_angle_deg < -360:
             self.current_angle_deg += 360
+            
+        return initial_angle
     
     def send_step_move_command(self, steps, direction):
         """
@@ -153,9 +168,15 @@ class StepperMotorManager:
         Args:
             steps: Number of steps to move
             direction: 'cw' or 'ccw'
+            
+        Returns:
+            float: Initial angle before the movement starts
         """
         if not self.serial_connection or not self.serial_connection.is_open:
-            return
+            return self.current_angle_deg
+        
+        # Capture initial angle before any updates
+        initial_angle = self.current_angle_deg
         
         # Calculate new motor positions based on direction
         if direction == 'ccw':  # A key - counter-clockwise
@@ -184,6 +205,8 @@ class StepperMotorManager:
             self.current_angle_deg -= 360
         elif self.current_angle_deg < -360:
             self.current_angle_deg += 360
+            
+        return initial_angle
     
     def home_motors(self):
         """Perform homing operation"""

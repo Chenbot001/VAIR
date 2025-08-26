@@ -87,19 +87,26 @@ ADAPTIVE_GRIPPING_CONFIG = {
 RECORDING_CONFIG = {
     "duration_seconds": 5.0,
     "sampling_rate_hz": 20,  # 20Hz reading rate
-    "error_threshold_degrees": 10.0,  # ±10 degrees acceptable error
 }
 
 # Display configuration
 DISPLAY_CONFIG = {
     "update_interval_seconds": 0.5,
     "sensor_fps_calculation_interval": 1.0,
-    "show_sensor_images": True,
+    "show_sensor_images": True,  # Set to False to disable sensor image windows
+    "sensor_image_update_rate_hz": 10,  # How often to update sensor images (lower = less CPU usage)
+}
+
+# Manual tilt configuration for calibration purposes
+MANUAL_TILT_CONFIG = {
+    "enabled": False,  # When True, uses manual tilt instead of calculated centerline angle
+    "current_value": 0,  # Current manual tilt value in degrees
+    "valid_values": [0, 10, 20, 30],  # Valid tilt values that can be toggled
 }
 
 # File paths
 PATHS = {
     "encoder_data_dir": "rotary_encoder",
     "encoder_plot_dir": "rotary_encoder/plot",
-    "encoder_csv_file": "encoder_data.csv",
+    "encoder_csv_file": "gripper_complete/encoder_data.csv",
 }

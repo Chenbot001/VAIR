@@ -134,47 +134,6 @@ def calculate_motor_positions(target_angle_deg, direction, current_m1_pos, curre
     return new_m1, new_m2
 
 
-def calculate_expected_angle_from_motor_positions(m1_pos, m2_pos, object_diameter_mm):
-    """
-    Calculate the expected angle based on current motor positions.
-    This represents the open-loop reference angle that the motors should achieve.
-    
-    Args:
-        m1_pos: Current M1 motor position in steps
-        m2_pos: Current M2 motor position in steps
-        object_diameter_mm: Object diameter in millimeters
-        
-    Returns:
-        float: Expected angle in degrees (0-360)
-    """
-    # Calculate the difference in motor positions
-    # M1 and M2 move in opposite directions for rotation
-    step_difference = m1_pos - m2_pos
-    
-    # For step mode (diameter ≤1mm), use a simple linear relationship
-    if object_diameter_mm <= 1.0:
-        # Use the estimated steps per degree for step mode
-        steps_per_deg = get_steps_per_degree(object_diameter_mm, 'cw')  # Use CW as reference
-        if steps_per_deg > 0:
-            expected_angle = step_difference / (2 * steps_per_deg)  # Divide by 2 since both motors contribute
-        else:
-            expected_angle = 0.0
-    else:
-        # For angle mode, use the calibrated steps per degree
-        steps_per_deg = get_steps_per_degree(object_diameter_mm, 'cw')  # Use CW as reference
-        if steps_per_deg > 0:
-            expected_angle = step_difference / (2 * steps_per_deg)  # Divide by 2 since both motors contribute
-        else:
-            expected_angle = 0.0
-    
-    # Normalize angle to 0-360 range
-    expected_angle = expected_angle % 360
-    if expected_angle < 0:
-        expected_angle += 360
-    
-    return expected_angle
-
-
 def unwrap_angles(angles):
     """
     Unwrap angle data to handle 0°/360° transitions smoothly.
@@ -249,7 +208,7 @@ def save_encoder_data_to_csv(data_row):
     
     Args:
         data_row: List containing [diameter, grip_strength, direction, steps, 
-                                 initial_angle, target_angle, measured_angle, error]
+                                 initial_angle, target_angle, measured_angle, error, tilt]
     """
     ensure_directories()
     
@@ -263,12 +222,12 @@ def save_encoder_data_to_csv(data_row):
             # Write headers if file doesn't exist
             if not file_exists:
                 writer.writerow(['diameter', 'grip_strength', 'direction', 'steps', 
-                                'initial_angle', 'target_angle', 'measured_angle', 'error'])
+                                'initial_angle', 'target_angle', 'measured_angle', 'error', 'tilt'])
             
             # Write data row
             writer.writerow(data_row)
             
-        print(f"💾 Data point saved to CSV: diameter={data_row[0]}mm, target={data_row[5]}°, measured={data_row[6]:.1f}°, error={data_row[7]:.1f}°")
+        print(f"💾 Data point saved to CSV: diameter={data_row[0]}mm, target={data_row[5]}°, measured={data_row[6]:.1f}°, error={data_row[7]:.1f}°, tilt={data_row[8]:.1f}°")
         
     except Exception as e:
         print(f"❌ Error saving CSV: {e}")

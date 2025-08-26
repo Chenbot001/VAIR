@@ -32,9 +32,9 @@ def get_steps_per_degree(diameter_mm, direction):
     """
     diameter_mm = max(CONFIG["min_diameter_mm"], min(CONFIG["max_diameter_mm"], diameter_mm))
     
-    # For step mode (diameter ≤1mm), return a default value
-    if diameter_mm <= 1.0:
-        return 0.3 * diameter_mm  # Estimate for step mode (will be calibrated in the future)
+    # For step mode (diameter = 1mm), return a default value
+    if diameter_mm == 1.0:
+        return 1.0  # 1 step per degree for step mode (will be calibrated in the future)
     
     calibration = ENCODER_CALIBRATION[direction]
     
@@ -233,6 +233,58 @@ def save_encoder_data_to_csv(data_row):
         print(f"❌ Error saving CSV: {e}")
 
 
+def save_encoder_thin_data_to_csv(recorded_data, session_metadata):
+    """
+    Save time series encoder data for 1mm diameter (thin wire) to a separate CSV file.
+    
+    Args:
+        recorded_data: List of time series data points from recording session
+        session_metadata: Dict containing session information (diameter, target, direction, etc.)
+    """
+    ensure_directories()
+    
+    # Create the thin data CSV file path
+    thin_csv_file = os.path.join(PATHS["encoder_data_dir"], "encoder_data_thin.csv")
+    
+    # Check if CSV file exists to determine if we need to write headers
+    file_exists = os.path.exists(thin_csv_file)
+    
+    # Generate a unique session ID based on timestamp
+    session_id = datetime.now().strftime('%Y%m%d_%H%M%S')
+    
+    try:
+        with open(thin_csv_file, 'a', newline='') as csvfile:
+            writer = csv.writer(csvfile)
+            
+            # Write headers if file doesn't exist
+            if not file_exists:
+                writer.writerow([
+                    'session_id', 'diameter', 'target_steps', 'direction', 'grip_strength', 
+                    'initial_angle', 'timestamp', 'elapsed_time', 'angle'
+                ])
+            
+            # Write all time series data points for this session
+            for data_point in recorded_data:
+                # data_point format: [timestamp, elapsed_time, angle, turn_count, single_turn_value, total_encoded_value, direction_str]
+                row = [
+                    session_id,
+                    session_metadata.get('diameter', 1.0),
+                    session_metadata.get('target_steps', 0),
+                    session_metadata.get('direction', 'unknown'),
+                    session_metadata.get('grip_strength', 0.0),
+                    session_metadata.get('initial_angle', 0.0),
+                    data_point[0],  # timestamp
+                    data_point[1],  # elapsed_time
+                    data_point[2]   # angle
+                ]
+                writer.writerow(row)
+            
+        print(f"💾 Thin wire session data saved: {len(recorded_data)} points to encoder_data_thin.csv (Session: {session_id})")
+        
+    except Exception as e:
+        print(f"❌ Error saving thin wire CSV: {e}")
+
+
 def create_encoder_plot(data, duration, diameter, target_angle, direction, low_velocity_point=None, low_velocity_angle=None):
     """
     Create and save encoder data plots.
@@ -310,22 +362,28 @@ def create_encoder_plot(data, duration, diameter, target_angle, direction, low_v
                         break
                 
                 if low_velocity_grad is not None:
-                    # Add annotation to velocity plot
-                    ax2.annotate(f'Angle: {low_velocity_angle:.1f}°\nVel: {low_velocity_grad:.1f}°/s', 
-                                xy=(low_velocity_point, low_velocity_grad),
-                                xytext=(low_velocity_point + 0.5, low_velocity_grad + 5),
-                                arrowprops=dict(arrowstyle='->', color='red'),
-                                bbox=dict(boxstyle="round,pad=0.3", facecolor="yellow", alpha=0.7),
-                                fontsize=10)
+                    # Add visible dots at the low velocity points
+                    ax1.plot(low_velocity_point, low_velocity_angle, 'ro', markersize=8, markerfacecolor='red', markeredgecolor='darkred', markeredgewidth=2, label='Low Velocity Point')
+                    ax2.plot(low_velocity_point, low_velocity_grad, 'ro', markersize=8, markerfacecolor='red', markeredgecolor='darkred', markeredgewidth=2, label='Low Velocity Point')
                     
-                    # Add vertical line to angle plot
-                    ax1.axvline(x=low_velocity_point, color='red', linestyle='--', alpha=0.7)
-                    ax1.annotate(f'Low Vel Point\nAngle: {low_velocity_angle:.1f}°', 
-                                xy=(low_velocity_point, low_velocity_angle),
-                                xytext=(low_velocity_point + 0.5, low_velocity_angle + 30),
-                                arrowprops=dict(arrowstyle='->', color='red'),
-                                bbox=dict(boxstyle="round,pad=0.3", facecolor="yellow", alpha=0.7),
-                                fontsize=10)
+                    # Add vertical line to angle plot for reference
+                    ax1.axvline(x=low_velocity_point, color='red', linestyle='--', alpha=0.3)
+                    ax2.axvline(x=low_velocity_point, color='red', linestyle='--', alpha=0.3)
+                    
+                    # Position annotations in appropriate corners without arrows
+                    # For angle plot: place in upper right corner
+                    ax1.text(0.98, 0.98, f'Low Vel Point\nAngle: {low_velocity_angle:.1f}°', 
+                            transform=ax1.transAxes, 
+                            verticalalignment='top', horizontalalignment='right',
+                            bbox=dict(boxstyle="round,pad=0.3", facecolor="yellow", alpha=0.8),
+                            fontsize=10)
+                    
+                    # For velocity plot: place in upper right corner
+                    ax2.text(0.98, 0.98, f'Angle: {low_velocity_angle:.1f}°\nVel: {low_velocity_grad:.1f}°/s', 
+                            transform=ax2.transAxes,
+                            verticalalignment='top', horizontalalignment='right',
+                            bbox=dict(boxstyle="round,pad=0.3", facecolor="yellow", alpha=0.8),
+                            fontsize=10)
         
         plt.tight_layout()
         plt.savefig(plot_filename, dpi=300, bbox_inches='tight')

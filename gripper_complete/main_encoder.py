@@ -198,13 +198,12 @@ class GripperControlSystem:
         
         print(f"ROTATION CONTROL ({self.state.control_mode.upper()}-Based):")
         print(f"  Motor Position: M1={hw_status['stepper']['m1_pos']:<4} | M2={hw_status['stepper']['m2_pos']:<4}")
-        print(f"  Current Angle:  {hw_status['stepper']['current_angle']:>6.1f}°")
         if self.state.control_mode == "angle":
+            print(f"  Current Angle:  {hw_status['stepper']['current_angle']:>6.1f}°")
             print(f"  Target Angle:   {self.state.target_angle_deg:>6.1f}°")
             print(f"  Steps/Degree:   CW={cw_steps_per_deg:.3f} | CCW={ccw_steps_per_deg:.3f}")
         else:
             print(f"  Target Steps:   {self.state.target_steps:>6}")
-            print(f"  Step Mode:      {self.state.object_diameter_mm}mm (uncalibrated)")
         print(f"  Object Diameter: {self.state.object_diameter_mm}mm")
         print(f"  Speed (steps/s): {hw_status['stepper']['speed']:<4}")
         print(f"  Status: {'Connected' if hw_status['stepper']['connected'] else 'Disconnected'}")
@@ -275,7 +274,7 @@ class GripperControlSystem:
         # Controls
         print("CONTROLS:")
         print("  Rotation:  [A] CCW | [D] CW | [W/S] Speed | [Q/E] Target ±5°/±50")
-        print("  Diameter:  [0] 0.2mm | [H] 0.5mm | [1] 1mm | [2/3/4/5] 2-5mm")
+        print("  Diameter:  [1] 1mm | [2/3/4/5] 2-5mm")
         print("  Gripper:   [O] Open | [C] Close (Adaptive)")
         print("  Sensor:    [B] Calibrate Baseline")
         print("  Tilt:      [J] Decrease | [K] Increase | [T] Toggle Mode")
@@ -412,16 +411,6 @@ class GripperControlSystem:
                                                self.state.target_steps - CONFIG["step_increment"])
             
             # --- Object Diameter Adjustment ---
-            elif key.char == '0':
-                self.state.update_diameter_and_control_mode(0.2)
-                # Reset counter when diameter changes
-                if self.state.sensors.encoder.connected:
-                    self.state.sensors.encoder.reset_consecutive_saves_counter()
-            elif key.char == 'h':
-                self.state.update_diameter_and_control_mode(0.5)  # 'h' for half (0.5mm)
-                # Reset counter when diameter changes
-                if self.state.sensors.encoder.connected:
-                    self.state.sensors.encoder.reset_consecutive_saves_counter()
             elif key.char == '1':
                 self.state.update_diameter_and_control_mode(1.0)
                 # Reset counter when diameter changes

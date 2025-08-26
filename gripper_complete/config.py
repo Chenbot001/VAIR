@@ -36,7 +36,7 @@ CONFIG = {
     "homing_speed": 500,  # Fast speed for homing and initialization operations
     
     # Control mode configuration
-    "min_diameter_mm": 0.2,
+    "min_diameter_mm": 1.0,
     "max_diameter_mm": 5,
     "initial_diameter_mm": 2,
     
@@ -99,7 +99,7 @@ DISPLAY_CONFIG = {
 
 # Manual tilt configuration for calibration purposes
 MANUAL_TILT_CONFIG = {
-    "enabled": False,  # When True, uses manual tilt instead of calculated centerline angle
+    "enabled": True,  # When True, uses manual tilt instead of calculated centerline angle
     "current_value": 0,  # Current manual tilt value in degrees
     "valid_values": [0, 10, 20, 30],  # Valid tilt values that can be toggled
 }

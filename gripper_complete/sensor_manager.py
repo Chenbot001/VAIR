@@ -41,7 +41,7 @@ from config import (
     DISPLAY_CONFIG, ADAPTIVE_GRIPPING_CONFIG, MANUAL_TILT_CONFIG
 )
 from utils import (
-    get_steps_per_degree, save_encoder_data_to_csv, 
+    get_steps_per_degree, save_encoder_data_to_csv, save_encoder_thin_data_to_csv,
     create_encoder_plot, calculate_low_velocity_point
 )
 
@@ -705,9 +705,9 @@ class RotaryEncoderManager:
             print(f"⚠ Recording disabled: Gripper is open ({gripper_closure_percent:.1f}% closed)")
             return
         
-        # Check diameter constraint: only record for diameters >= 2mm
-        if self.recording_diameter < 2.0:
-            print(f"⚠ Recording disabled: Diameter {self.recording_diameter}mm < 2mm (manual data entry required for thin wires)")
+        # Check diameter constraint: only record for diameters >= 1mm
+        if self.recording_diameter < 1.0:
+            print(f"⚠ Recording disabled: Diameter {self.recording_diameter}mm < 1mm (not supported in this script)")
             return
         
         if not self.is_recording:
@@ -816,56 +816,92 @@ class RotaryEncoderManager:
         
         # Check if error is within acceptable range
         if abs(error) <= dynamic_threshold:
-            # Calculate steps using calibration data
-            steps_per_degree = get_steps_per_degree(self.recording_diameter, self.recording_direction)
-            calculated_steps = self.recording_target_angle * steps_per_degree
-            calculated_steps = round(calculated_steps / 0.0625) * 0.0625
-            
-            # Prepare data row for CSV
-            data_row = [
-                self.recording_diameter,
-                round(self.recording_grip_strength, 4),
-                self.recording_direction,
-                round(calculated_steps, 4),
-                round(self.recording_initial_angle, 2),
-                round(self.recording_target_angle, 2),
-                round(measured_angle, 2),
-                round(error, 2),
-                round(self.recording_tilt, 1)  # Add tilt column
-            ]
-            
-            # Save to CSV
-            save_encoder_data_to_csv(data_row)
-            
-            # Update consecutive saves counter
-            current_diameter = self.recording_diameter
-            current_target_angle = round(self.recording_target_angle, 2)
-            
-            if (self.last_saved_diameter == current_diameter and 
-                self.last_saved_target_angle == current_target_angle):
-                self.consecutive_saves_counter += 1
+            # Special case for 1mm diameter: save time series data and create plot
+            if self.recording_diameter == 1.0:
+                print(f"📊 1mm diameter: Saving time series data and creating plot")
+                
+                # Prepare session metadata
+                session_metadata = {
+                    'diameter': self.recording_diameter,
+                    'target_steps': self.recording_target_angle,  # This is actually steps for 1mm
+                    'direction': self.recording_direction,
+                    'grip_strength': self.recording_grip_strength,
+                    'initial_angle': self.recording_initial_angle,
+                    'tilt': self.recording_tilt
+                }
+                
+                # Save time series data to thin CSV
+                save_encoder_thin_data_to_csv(self.recorded_data, session_metadata)
+                
+                # Update latest saved data for dashboard display (marked as saved for thin data)
+                self.latest_saved_data = {
+                    'initial_angle': round(self.recording_initial_angle, 2),
+                    'target_angle': round(self.recording_target_angle, 2),  # Actually steps
+                    'measured_angle': round(measured_angle, 2),
+                    'error': round(error, 2),
+                    'direction': self.recording_direction,
+                    'saved': True,  # Mark as saved for 1mm thin data
+                    'consecutive_count': 0  # No consecutive counting for thin data
+                }
+                
+                # Create plot
+                create_encoder_plot(
+                    self.recorded_data, duration, 
+                    self.recording_diameter, self.recording_target_angle, 
+                    self.recording_direction, low_velocity_time, low_velocity_angle
+                )
             else:
-                self.consecutive_saves_counter = 1  # First save with this combination
-                self.last_saved_diameter = current_diameter
-                self.last_saved_target_angle = current_target_angle
-            
-            # Update latest saved data for dashboard display
-            self.latest_saved_data = {
-                'initial_angle': round(self.recording_initial_angle, 2),
-                'target_angle': round(self.recording_target_angle, 2),
-                'measured_angle': round(measured_angle, 2),
-                'error': round(error, 2),
-                'direction': self.recording_direction,
-                'saved': True,
-                'consecutive_count': self.consecutive_saves_counter
-            }
-            
-            # Create plot
-            create_encoder_plot(
-                self.recorded_data, duration, 
-                self.recording_diameter, self.recording_target_angle, 
-                self.recording_direction, low_velocity_time, low_velocity_angle
-            )
+                # Normal case for diameters >= 2mm: save to CSV and create plot
+                # Calculate steps using calibration data
+                steps_per_degree = get_steps_per_degree(self.recording_diameter, self.recording_direction)
+                calculated_steps = self.recording_target_angle * steps_per_degree
+                calculated_steps = round(calculated_steps / 0.0625) * 0.0625
+                
+                # Prepare data row for CSV
+                data_row = [
+                    self.recording_diameter,
+                    round(self.recording_grip_strength, 4),
+                    self.recording_direction,
+                    round(calculated_steps, 4),
+                    round(self.recording_initial_angle, 2),
+                    round(self.recording_target_angle, 2),
+                    round(measured_angle, 2),
+                    round(error, 2),
+                    round(self.recording_tilt, 1)  # Add tilt column
+                ]
+                
+                # Save to CSV
+                save_encoder_data_to_csv(data_row)
+                
+                # Update consecutive saves counter
+                current_diameter = self.recording_diameter
+                current_target_angle = round(self.recording_target_angle, 2)
+                
+                if (self.last_saved_diameter == current_diameter and 
+                    self.last_saved_target_angle == current_target_angle):
+                    self.consecutive_saves_counter += 1
+                else:
+                    self.consecutive_saves_counter = 1  # First save with this combination
+                    self.last_saved_diameter = current_diameter
+                    self.last_saved_target_angle = current_target_angle
+                
+                # Update latest saved data for dashboard display
+                self.latest_saved_data = {
+                    'initial_angle': round(self.recording_initial_angle, 2),
+                    'target_angle': round(self.recording_target_angle, 2),
+                    'measured_angle': round(measured_angle, 2),
+                    'error': round(error, 2),
+                    'direction': self.recording_direction,
+                    'saved': True,
+                    'consecutive_count': self.consecutive_saves_counter
+                }
+                
+                # Create plot
+                create_encoder_plot(
+                    self.recorded_data, duration, 
+                    self.recording_diameter, self.recording_target_angle, 
+                    self.recording_direction, low_velocity_time, low_velocity_angle
+                )
         else:
             print(f"⚠ Data discarded: error {error:.1f}° exceeds ±{dynamic_threshold:.1f}° threshold (half of target {self.recording_target_angle:.1f}°)")
             

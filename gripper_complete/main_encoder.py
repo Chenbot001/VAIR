@@ -8,6 +8,7 @@ import threading
 import signal
 import sys
 import os
+import csv
 
 from pynput import keyboard
 
@@ -265,7 +266,12 @@ class GripperControlSystem:
             direction = latest_data.get('direction', 'Unknown')
             consecutive_count = latest_data.get('consecutive_count', 0)
             count_display = f" | Count: {consecutive_count}" if consecutive_count > 0 else ""
-            print(f"  Last Operation: {direction.upper()} | Init={latest_data['initial_angle']}° | Turn={latest_data['target_angle']}° | Measured={latest_data['measured_angle']}° | Error={latest_data['error']}° | {status_icon}{count_display}")
+            
+            # Display format depends on control mode
+            if self.state.control_mode == "step":
+                print(f"  Last Operation: {direction.upper()} | Init={latest_data['initial_angle']}° | Steps={latest_data['target_angle']} | Measured={latest_data['measured_angle']}° | Error={latest_data['error']}° | {status_icon}{count_display}")
+            else:
+                print(f"  Last Operation: {direction.upper()} | Init={latest_data['initial_angle']}° | Turn={latest_data['target_angle']}° | Measured={latest_data['measured_angle']}° | Error={latest_data['error']}° | {status_icon}{count_display}")
         else:
             print(f"  Last Operation: No data recorded yet")
         
@@ -329,6 +335,8 @@ class GripperControlSystem:
                             self.state.sensors.visuotactile.max_depth_intensity,
                             self.state.sensors.visuotactile.get_rounded_tilt_angle()
                         )
+                        # Update motor speed for step-based recording
+                        self.state.sensors.encoder.update_motor_speed(self.state.hardware.stepper.speed)
                         # Start recording
                         self.state.sensors.encoder.start_encoder_recording(
                             'ccw', self.state.hardware.gripper.gripper_closure_percent, initial_angle
@@ -368,7 +376,7 @@ class GripperControlSystem:
                         self.state.target_steps, 'cw'
                     )
                     
-                    # Start encoder recording for 5 secondscx
+                    # Start encoder recording for 5 seconds
                     if self.state.sensors.encoder.connected:
                         # Update recording metadata first (use steps as target)
                         self.state.sensors.encoder.update_recording_metadata(
@@ -377,6 +385,8 @@ class GripperControlSystem:
                             self.state.sensors.visuotactile.max_depth_intensity,
                             self.state.sensors.visuotactile.get_rounded_tilt_angle()
                         )
+                        # Update motor speed for step-based recording
+                        self.state.sensors.encoder.update_motor_speed(self.state.hardware.stepper.speed)
                         # Start recording
                         self.state.sensors.encoder.start_encoder_recording(
                             'cw', self.state.hardware.gripper.gripper_closure_percent, initial_angle

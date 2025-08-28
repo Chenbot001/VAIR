@@ -348,9 +348,16 @@ def create_encoder_plot(data, duration, diameter, target_angle, direction, low_v
             ax2.grid(True, alpha=0.3)
             ax2.axhline(y=0, color='k', linestyle='--', alpha=0.5)  # Zero line
             
-            # Add threshold line at 1 deg/s
-            ax2.axhline(y=1.0, color='g', linestyle='--', alpha=0.7, label='1 deg/s threshold')
-            ax2.axhline(y=-1.0, color='g', linestyle='--', alpha=0.7)
+            # Add threshold line based on diameter
+            if diameter <= 1.0:
+                threshold_value = 0.5
+                threshold_label = '0.5 deg/s threshold (1mm)'
+            else:
+                threshold_value = 1.0
+                threshold_label = '1 deg/s threshold (2-5mm)'
+            
+            ax2.axhline(y=threshold_value, color='g', linestyle='--', alpha=0.7, label=threshold_label)
+            ax2.axhline(y=-threshold_value, color='g', linestyle='--', alpha=0.7)
             
             # Label the low velocity point if found
             if low_velocity_point is not None and low_velocity_angle is not None:
@@ -396,18 +403,28 @@ def create_encoder_plot(data, duration, diameter, target_angle, direction, low_v
         print(f"❌ Error creating plot: {e}")
 
 
-def calculate_low_velocity_point(data):
+def calculate_low_velocity_point(data, diameter_mm=None):
     """
-    Calculate the first point where angular velocity drops below 1 deg/s.
+    Calculate the first point where angular velocity drops below threshold.
+    Uses different thresholds based on diameter:
+    - 1mm: 0.5 deg/s threshold (more sensitive for step-based control)
+    - 2-5mm: 1.0 deg/s threshold (standard for angle-based control)
     
     Args:
         data: List of encoder data points
+        diameter_mm: Wire diameter in mm (optional, defaults to 1.0 deg/s threshold)
         
     Returns:
         tuple: (low_velocity_time, low_velocity_angle) or (None, None) if not found
     """
     if len(data) < 2:
         return None, None
+    
+    # Set velocity threshold based on diameter
+    if diameter_mm is not None and diameter_mm <= 1.0:
+        velocity_threshold = 0.5  # Lower threshold for 1mm case
+    else:
+        velocity_threshold = 1.0  # Standard threshold for 2-5mm case
     
     # Extract data
     times = [row[1] for row in data]
@@ -422,7 +439,85 @@ def calculate_low_velocity_point(data):
         dangle = unwrapped_angles[i] - unwrapped_angles[i-1]
         if dt > 0:
             gradient = dangle / dt
-            if abs(gradient) < 1.0:  # First point below 1 deg/s
+            if abs(gradient) < velocity_threshold:  # First point below threshold
                 return times[i], angles[i]
     
     return None, None
+
+
+def calculate_angular_displacement(start_angle, end_angle, direction):
+    """
+    Calculate angular displacement between two angles, handling 0°/360° wrapping.
+    
+    Args:
+        start_angle: Starting angle in degrees (0-360)
+        end_angle: Ending angle in degrees (0-360)
+        direction: Expected movement direction ('cw' or 'ccw')
+        
+    Returns:
+        float: Angular displacement in degrees (always positive)
+    """
+    # Calculate raw difference
+    diff = end_angle - start_angle
+    
+    # Handle wrapping for each direction
+    if direction == 'cw':
+        if diff < 0:
+            # Wrapped around 0° boundary (e.g., 350° to 10°)
+            displacement = diff + 360.0
+        else:
+            # Normal CW rotation
+            displacement = diff
+    else:  # ccw
+        if diff > 0:
+            # Wrapped around 0° boundary (e.g., 10° to 350°)
+            displacement = 360.0 - diff
+        else:
+            # Normal CCW rotation (negative diff becomes positive displacement)
+            displacement = abs(diff)
+    
+    return abs(displacement)
+
+
+def save_encoder_steps_data_to_csv(diameter_mm, speed, target_steps, angle, direction):
+    """
+    Save step-based encoder data to the specific steps CSV file.
+    
+    Args:
+        diameter_mm: Wire diameter in mm
+        speed: Motor speed in steps/sec
+        target_steps: Target steps for movement
+        angle: Measured angular displacement (non-negative)
+        direction: Movement direction ('cw' or 'ccw')
+    """
+    # Use the same file as main_thin.py for consistency
+    csv_file_path = os.path.join("gripper_complete", "encoder_data_steps.csv")
+    
+    # Ensure directory exists
+    os.makedirs(os.path.dirname(csv_file_path), exist_ok=True)
+    
+    # Check if file exists to determine if we need headers
+    file_exists = os.path.exists(csv_file_path)
+    
+    try:
+        with open(csv_file_path, 'a', newline='') as csvfile:
+            fieldnames = ['diameter', 'speed', 'step', 'angle', 'direction']
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            
+            # Write header if file is new
+            if not file_exists:
+                writer.writeheader()
+            
+            # Write data row
+            writer.writerow({
+                'diameter': diameter_mm,
+                'speed': speed,
+                'step': target_steps,
+                'angle': f"{abs(angle):.2f}",  # Ensure non-negative angle
+                'direction': direction
+            })
+            
+        print(f"💾 Step-based data saved: {diameter_mm}mm | {target_steps} steps | {abs(angle):.2f}° | {direction.upper()}")
+        
+    except Exception as e:
+        print(f"❌ Error saving step-based data to CSV: {e}")

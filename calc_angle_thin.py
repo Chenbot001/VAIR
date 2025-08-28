@@ -17,7 +17,84 @@ except ImportError:
 # We can use a unique portion of this ID to find the device.
 TARGET_SERIAL_ID = "2B9D0D7D&0&0000"
 
+# Stabilization parameters (always enabled)
+ANGLE_SMOOTHING_FACTOR = 0.8  # Higher = more smoothing (0.0-1.0)
+MIN_ANGLE_CHANGE = 0.5  # Minimum angle change to register (degrees)
+ANGLE_HISTORY_SIZE = 5  # Number of recent angles to consider for median filtering
+
 # --- Helper Functions ---
+
+class AngleStabilizer:
+    """Class to stabilize angle readings and reduce flickering"""
+    def __init__(self, smoothing_factor=0.8, min_change=0.5, history_size=5):
+        self.smoothing_factor = smoothing_factor
+        self.min_change = min_change
+        self.history_size = history_size
+        self.previous_angle = None
+        self.smoothed_angle = None
+        self.angle_history = []
+        
+    def update(self, new_angle):
+        """Update with new angle and return stabilized angle"""
+        if new_angle is None:
+            return self.smoothed_angle
+            
+        # Add to history for median filtering
+        self.angle_history.append(new_angle)
+        if len(self.angle_history) > self.history_size:
+            self.angle_history.pop(0)
+            
+        # Use median of recent angles to reduce noise
+        if len(self.angle_history) >= 3:
+            # Handle angle wraparound for median calculation
+            angles_unwrapped = self._unwrap_angles(self.angle_history)
+            median_angle = np.median(angles_unwrapped)
+            median_angle = median_angle % 360  # Wrap back to 0-360
+        else:
+            median_angle = new_angle
+            
+        # Initialize if first reading
+        if self.smoothed_angle is None:
+            self.smoothed_angle = median_angle
+            self.previous_angle = median_angle
+            return self.smoothed_angle
+            
+        # Calculate angle difference considering wraparound
+        diff = self._angle_difference(median_angle, self.smoothed_angle)
+        
+        # Only update if change is significant enough
+        if abs(diff) > self.min_change:
+            # Apply exponential smoothing
+            self.smoothed_angle = self._angle_lerp(self.smoothed_angle, median_angle, 1 - self.smoothing_factor)
+            self.previous_angle = self.smoothed_angle
+            
+        return self.smoothed_angle
+    
+    def _angle_difference(self, angle1, angle2):
+        """Calculate the shortest angular difference between two angles"""
+        diff = angle1 - angle2
+        if diff > 180:
+            diff -= 360
+        elif diff < -180:
+            diff += 360
+        return diff
+    
+    def _angle_lerp(self, angle1, angle2, t):
+        """Linear interpolation between two angles considering wraparound"""
+        diff = self._angle_difference(angle2, angle1)
+        result = angle1 + diff * t
+        return result % 360
+    
+    def _unwrap_angles(self, angles):
+        """Unwrap angles to handle 0/360 boundary for median calculation"""
+        if not angles:
+            return angles
+            
+        unwrapped = [angles[0]]
+        for i in range(1, len(angles)):
+            diff = self._angle_difference(angles[i], unwrapped[-1])
+            unwrapped.append(unwrapped[-1] + diff)
+        return unwrapped
 
 def find_camera_index_by_serial(target_id):
     """
@@ -90,7 +167,7 @@ def get_pointer_angle_and_line(frame):
     thresh = remove_small_components(thresh, min_size=15)
 
     # Use more restrictive parameters for line detection to avoid noise
-    lines = cv2.HoughLinesP(thresh, 1, np.pi / 180, threshold=25, minLineLength=30, maxLineGap=3)
+    lines = cv2.HoughLinesP(thresh, 1, np.pi / 180, threshold=30, minLineLength=35, maxLineGap=2)
     
     if lines is not None:
         # Filter lines by length and proximity to center
@@ -108,10 +185,13 @@ def get_pointer_angle_and_line(frame):
             A = y2 - y1
             B = x1 - x2
             C = x2 * y1 - x1 * y2
-            dist_to_center = abs(A * center_x + B * center_y + C) / math.sqrt(A*A + B*B)
+            if A*A + B*B > 0:  # Avoid division by zero
+                dist_to_center = abs(A * center_x + B * center_y + C) / math.sqrt(A*A + B*B)
+            else:
+                continue
             
             # Only keep lines that are long enough and pass near the center
-            if length > 25 and dist_to_center < 20:  # Adjust these thresholds as needed
+            if length > 30 and dist_to_center < 15:  # Stricter thresholds for stability
                 valid_lines.append((line, length))
         
         if valid_lines:
@@ -165,6 +245,13 @@ print("\n--- Controls ---")
 print("Press '0' to quit.")
 print("----------------\n")
 
+# Initialize angle stabilizer (always enabled)
+angle_stabilizer = AngleStabilizer(
+    smoothing_factor=ANGLE_SMOOTHING_FACTOR,
+    min_change=MIN_ANGLE_CHANGE,
+    history_size=ANGLE_HISTORY_SIZE
+)
+
 while True:
     ret, frame = cap.read()
     if not ret:
@@ -173,7 +260,10 @@ while True:
     key = cv2.waitKey(1) & 0xFF
 
     # Get pointer angle and line coordinates
-    angle, line_coords, thresh, center = get_pointer_angle_and_line(frame)
+    raw_angle, line_coords, thresh, center = get_pointer_angle_and_line(frame)
+    
+    # Apply stabilization (always enabled)
+    stabilized_angle = angle_stabilizer.update(raw_angle)
     
     # Draw red dot at center of raw image
     cv2.circle(frame, center, 5, (0, 0, 255), -1)  # Red dot at center
@@ -189,12 +279,13 @@ while True:
         # Draw a small blue circle at the start point (closest to center)
         cv2.circle(thresh_display, (start_x, start_y), 3, (255, 0, 0), -1)  # Blue dot at start
         
-        # Overlay angle text on raw image only
-        cv2.putText(frame, f"Angle: {angle:.1f}", (10, 30), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+        # Overlay angle text on raw image
+        if stabilized_angle is not None:
+            cv2.putText(frame, f"Angle: {stabilized_angle:.1f}°", (10, 30), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)  # Green text for stabilized angle
     else:
         cv2.putText(frame, "No pointer detected", (10, 30), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)  # Red text for no detection
 
     if key == ord('0'):
         break

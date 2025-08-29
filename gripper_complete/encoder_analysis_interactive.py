@@ -11,8 +11,11 @@ import numpy as np
 import seaborn as sns
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
+from matplotlib.lines import Line2D
 from pathlib import Path
 import os
+from sklearn.linear_model import LinearRegression
+from scipy import stats
 
 class EncoderAnalysisGUI:
     def __init__(self, root):
@@ -90,7 +93,7 @@ class EncoderAnalysisGUI:
         ttk.Label(plot_config_frame, text="Plot Type:").grid(row=5, column=0, sticky=tk.W)
         self.plot_type = tk.StringVar(value='scatterplot')
         plot_type_combo = ttk.Combobox(plot_config_frame, textvariable=self.plot_type, 
-                                       values=['scatterplot', 'boxplot', 'violinplot', 'lineplot', 'histogram'])
+                                       values=['scatterplot', 'boxplot'])
         plot_type_combo.grid(row=5, column=1, sticky=(tk.W, tk.E))
         
         # Plot options
@@ -245,24 +248,153 @@ class EncoderAnalysisGUI:
             if plot_type == 'scatterplot':
                 sns.scatterplot(data=plot_df, x=x_var, y=y_var, hue=color_var, ax=ax, 
                                palette=colors if color_var else None, s=60)
+                
+                # Add linear regression lines
+                self.add_regression_lines(ax, plot_df, x_var, y_var, color_var, colors)
+                
             elif plot_type == 'boxplot':
-                sns.boxplot(data=plot_df, x=x_var, y=y_var, hue=color_var, ax=ax,
+                box_plot = sns.boxplot(data=plot_df, x=x_var, y=y_var, hue=color_var, ax=ax,
                            palette=colors if color_var else None)
-            elif plot_type == 'violinplot':
-                sns.violinplot(data=plot_df, x=x_var, y=y_var, hue=color_var, ax=ax,
-                              palette=colors if color_var else None)
-            elif plot_type == 'lineplot':
-                sns.lineplot(data=plot_df, x=x_var, y=y_var, hue=color_var, ax=ax, 
-                            errorbar=None, palette=colors if color_var else None, linewidth=2)
-            elif plot_type == 'histogram':
-                sns.histplot(data=plot_df, x=x_var, hue=color_var, multiple="stack", ax=ax,
-                            palette=colors if color_var else None)
+                
+                # Add detailed statistics to box plot
+                self.annotate_boxplot_stats(ax, plot_df, x_var, y_var, color_var)
             
             self.finalize_plot(ax, x_var, y_var, color_var)
             self.canvas.draw()
             
         except Exception as e:
             messagebox.showerror("Plotting Error", f"An error occurred: {str(e)}")
+            
+    def add_regression_lines(self, ax, plot_df, x_var, y_var, color_var, colors):
+        """Add linear regression lines to scatter plot with slope labels."""
+        # Check if data is numeric
+        if not pd.api.types.is_numeric_dtype(plot_df[x_var]) or not pd.api.types.is_numeric_dtype(plot_df[y_var]):
+            return
+
+        # Remove any NaN values
+        clean_df = plot_df[[x_var, y_var, color_var] if color_var else [x_var, y_var]].dropna()
+        if len(clean_df) < 2:
+            return
+
+        regression_handles = []
+        regression_labels = []
+
+        if color_var and color_var in clean_df.columns:
+            # Separate regression lines for each group
+            unique_groups = clean_df[color_var].unique()
+            for i, group in enumerate(unique_groups):
+                group_data = clean_df[clean_df[color_var] == group]
+                if len(group_data) < 2:
+                    continue
+                x_vals = group_data[x_var].values
+                y_vals = group_data[y_var].values
+                # Calculate regression using numpy polyfit for simplicity
+                coefficients = np.polyfit(x_vals, y_vals, 1)
+                slope = coefficients[0]
+                intercept = coefficients[1]
+                # Calculate R-squared manually
+                y_mean = np.mean(y_vals)
+                y_pred_vals = slope * x_vals + intercept
+                ss_tot = np.sum((y_vals - y_mean) ** 2)
+                ss_res = np.sum((y_vals - y_pred_vals) ** 2)
+                r_squared = 1 - (ss_res / ss_tot) if ss_tot != 0 else 0
+                # Plot regression line
+                x_range = np.linspace(x_vals.min(), x_vals.max(), 100)
+                y_pred = slope * x_range + intercept
+                color = colors[i % len(colors)]
+                ax.plot(x_range, y_pred, '--', color=color, linewidth=2, alpha=0.8)
+                # Add custom handle for regression line with group color and label
+                regression_handles.append(Line2D([0], [1], color=color, linestyle='--', linewidth=2))
+                regression_labels.append(f"{group}: slope={slope:.3f}, R²={r_squared:.3f}")
+            # Show only regression lines in legend for clarity
+            ax.legend(regression_handles, regression_labels, loc='best', frameon=True, fancybox=True, shadow=True)
+        else:
+            # Single regression line for all data
+            x_vals = clean_df[x_var].values
+            y_vals = clean_df[y_var].values
+            coefficients = np.polyfit(x_vals, y_vals, 1)
+            slope = coefficients[0]
+            intercept = coefficients[1]
+            y_mean = np.mean(y_vals)
+            y_pred_vals = slope * x_vals + intercept
+            ss_tot = np.sum((y_vals - y_mean) ** 2)
+            ss_res = np.sum((y_vals - y_pred_vals) ** 2)
+            r_squared = 1 - (ss_res / ss_tot) if ss_tot != 0 else 0
+            x_range = np.linspace(x_vals.min(), x_vals.max(), 100)
+            y_pred = slope * x_range + intercept
+            ax.plot(x_range, y_pred, '--', color='red', linewidth=2, alpha=0.8)
+            # Add regression info to legend
+            handles, labels = ax.get_legend_handles_labels()
+            handles.append(Line2D([0], [1], color='red', linestyle='--', linewidth=2))
+            labels.append(f"slope={slope:.3f}, R²={r_squared:.3f}")
+            ax.legend(handles, labels, loc='best', frameon=True, fancybox=True, shadow=True)
+    
+    def annotate_boxplot_stats(self, ax, plot_df, x_var, y_var, color_var):
+        """Add statistical annotations to box plots."""
+        # Check if y variable is numeric
+        if not pd.api.types.is_numeric_dtype(plot_df[y_var]):
+            return
+            
+        # Remove any NaN values
+        clean_df = plot_df[[x_var, y_var, color_var] if color_var else [x_var, y_var]].dropna()
+        
+        if len(clean_df) == 0:
+            return
+        
+        # Get unique x categories
+        x_categories = clean_df[x_var].unique()
+        
+        # Calculate position offset for text
+        y_range = clean_df[y_var].max() - clean_df[y_var].min()
+        text_offset = y_range * 0.02
+        
+        for i, x_cat in enumerate(x_categories):
+            if color_var and color_var in clean_df.columns:
+                # Handle grouped box plots
+                color_groups = clean_df[clean_df[x_var] == x_cat][color_var].unique()
+                n_groups = len(color_groups)
+                
+                for j, color_group in enumerate(color_groups):
+                    subset = clean_df[(clean_df[x_var] == x_cat) & (clean_df[color_var] == color_group)]
+                    if len(subset) == 0:
+                        continue
+                        
+                    stats_data = subset[y_var]
+                    mean_val = stats_data.mean()
+                    median_val = stats_data.median()
+                    q1 = stats_data.quantile(0.25)
+                    q3 = stats_data.quantile(0.75)
+                    
+                    # Calculate x position for grouped boxes
+                    group_width = 0.8 / n_groups
+                    x_pos = i + (j - (n_groups - 1) / 2) * group_width
+                    
+                    # Position text above the box
+                    y_pos = stats_data.max() + text_offset
+                    
+                    # Add annotations
+                    text = f"μ={mean_val:.2f}\nM={median_val:.2f}\nQ1={q1:.2f}\nQ3={q3:.2f}"
+                    ax.text(x_pos, y_pos, text, ha='center', va='bottom', fontsize=8,
+                           bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8))
+            else:
+                # Handle single box plots
+                subset = clean_df[clean_df[x_var] == x_cat]
+                if len(subset) == 0:
+                    continue
+                    
+                stats_data = subset[y_var]
+                mean_val = stats_data.mean()
+                median_val = stats_data.median()
+                q1 = stats_data.quantile(0.25)
+                q3 = stats_data.quantile(0.75)
+                
+                # Position text above the box
+                y_pos = stats_data.max() + text_offset
+                
+                # Add annotations
+                text = f"μ={mean_val:.2f}\nM={median_val:.2f}\nQ1={q1:.2f}\nQ3={q3:.2f}"
+                ax.text(i, y_pos, text, ha='center', va='bottom', fontsize=8,
+                       bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8))
             
     def finalize_plot(self, ax, x_var, y_var, color_var):
         """Final touches for the plot."""

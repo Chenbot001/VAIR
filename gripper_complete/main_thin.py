@@ -284,7 +284,7 @@ class CameraDataCollector:
                     'diameter': self.recording_metadata['diameter_mm'],
                     'speed': self.recording_metadata['speed'], 
                     'step': self.recording_metadata['target_steps'],
-                    'angle': f"{abs_angular_displacement:.2f}",  
+                    'measured_angle': f"{abs_angular_displacement:.2f}",  
                     'direction': self.recording_metadata['direction']
                 })
                 

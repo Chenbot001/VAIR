@@ -513,7 +513,7 @@ def save_encoder_steps_data_to_csv(diameter_mm, speed, target_steps, angle, dire
                 'diameter': diameter_mm,
                 'speed': speed,
                 'step': target_steps,
-                'angle': f"{abs(angle):.2f}",  # Ensure non-negative angle
+                'measured_angle': f"{abs(angle):.2f}",  # Ensure non-negative angle
                 'direction': direction
             })
             

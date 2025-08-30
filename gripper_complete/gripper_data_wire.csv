@@ -1,4 +1,4 @@
-﻿diameter,direction,tilt,steps,stepper_travel,measured_angle,k_thin,system_offset,predicted_angle,error
+﻿diameter,direction,tilt,steps,stepper_travel,measured_angle,k_wire,c_wire,predicted_angle,error
 0.2,ccw,0,10,0.254,7.75,1.362,-5.952,7.668,-0.082
 0.2,ccw,0,10,0.254,6.26,1.362,-5.952,7.668,1.408
 0.2,ccw,0,15,0.381,14.11,1.362,-5.952,14.478,0.368

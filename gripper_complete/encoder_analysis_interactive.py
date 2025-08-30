@@ -305,7 +305,9 @@ class EncoderAnalysisGUI:
                 ax.plot(x_range, y_pred, '--', color=color, linewidth=2, alpha=0.8)
                 # Add custom handle for regression line with group color and label
                 regression_handles.append(Line2D([0], [1], color=color, linestyle='--', linewidth=2))
-                regression_labels.append(f"{group}: slope={slope:.3f}, R²={r_squared:.3f}")
+                # Format intercept with sign
+                intercept_str = f"+{intercept:.3f}" if intercept >= 0 else f"{intercept:.3f}"
+                regression_labels.append(f"{group}: y={slope:.3f}x{intercept_str}, R²={r_squared:.3f}")
             # Show only regression lines in legend for clarity
             ax.legend(regression_handles, regression_labels, loc='best', frameon=True, fancybox=True, shadow=True)
         else:
@@ -326,7 +328,8 @@ class EncoderAnalysisGUI:
             # Add regression info to legend
             handles, labels = ax.get_legend_handles_labels()
             handles.append(Line2D([0], [1], color='red', linestyle='--', linewidth=2))
-            labels.append(f"slope={slope:.3f}, R²={r_squared:.3f}")
+            intercept_str = f"+{intercept:.3f}" if intercept >= 0 else f"{intercept:.3f}"
+            labels.append(f"y={slope:.3f}x{intercept_str}, R²={r_squared:.3f}")
             ax.legend(handles, labels, loc='best', frameon=True, fancybox=True, shadow=True)
     
     def annotate_boxplot_stats(self, ax, plot_df, x_var, y_var, color_var):

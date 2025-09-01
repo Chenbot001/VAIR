@@ -22,7 +22,7 @@ if __name__ == "__main__":
 
         cv2.imshow('depth', depth_img)
 
-        cv2.imshow('img', img)
+        # cv2.imshow('img', img)
 
         cv2.imshow('deformation', put_arrows_on_image(black_img, deformation*20))
         cv2.imshow('shear', put_arrows_on_image(black_img, shear*20))

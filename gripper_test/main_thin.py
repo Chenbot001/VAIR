@@ -123,7 +123,7 @@ class CameraDataCollector:
         self.recording_thread = None
         self.initial_angle = None
         self.final_angle = None
-        self.csv_file_path = os.path.join("gripper_complete", "encoder_data_steps.csv")
+        self.csv_file_path = os.path.join("gripper_test", "encoder_data_steps.csv")
         
         # Counter for consecutive saves with same diameter+target_steps combination
         self.consecutive_saves_counter = 0

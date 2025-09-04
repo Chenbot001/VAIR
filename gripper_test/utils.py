@@ -447,39 +447,50 @@ def calculate_low_velocity_point(data, diameter_mm=None):
 
 def calculate_angular_displacement(start_angle, end_angle, direction):
     """
-    Calculate angular displacement between two angles, handling 0°/360° wrapping.
+    Calculate angular displacement between two angles for a FIXED CW ENCODER.
+    
+    IMPORTANT: This encoder is fixed to CW direction and always increases clockwise.
+    - CW motor movement: encoder increases normally
+    - CCW motor movement: encoder still increases, showing complement angle
     
     Args:
         start_angle: Starting angle in degrees (0-360)
-        end_angle: Ending angle in degrees (0-360)
+        end_angle: Ending angle in degrees (0-360)  
         direction: Expected movement direction ('cw' or 'ccw')
         
     Returns:
         float: Angular displacement in degrees (always positive)
     """
-    # Calculate raw difference
+    # Calculate raw difference (how much encoder increased)
     diff = end_angle - start_angle
     
-    # Handle wrapping for each direction
+    # Handle 0°/360° wrapping: if diff is negative, we crossed the boundary
+    if diff < 0:
+        diff += 360.0
+    
+    # Now diff represents how much the encoder increased (0-360°)
+    
     if direction == 'cw':
-        if diff < 0:
-            # Wrapped around 0° boundary (e.g., 350° to 10°)
-            displacement = diff + 360.0
-        else:
-            # Normal CW rotation
-            displacement = diff
+        # CW motor movement: encoder increase directly represents rotation magnitude
+        displacement = diff
     else:  # ccw
-        if diff > 0:
-            # Wrapped around 0° boundary (e.g., 10° to 350°)
-            displacement = 360.0 - diff
+        # CCW motor movement: encoder increase represents complement of actual rotation
+        # For small CCW rotations: encoder shows small increase (actual displacement)
+        # For large CCW rotations: encoder shows large increase (complement of displacement)
+        # We need to determine which case this is:
+        
+        if diff <= 180.0:
+            # Small encoder increase likely means small CCW rotation
+            displacement = diff
         else:
-            # Normal CCW rotation (negative diff becomes positive displacement)
-            displacement = abs(diff)
+            # Large encoder increase likely means large CCW rotation
+            # The actual CCW displacement is the complement
+            displacement = 360.0 - diff
     
     return abs(displacement)
 
 
-def save_encoder_steps_data_to_csv(diameter_mm, speed, target_steps, angle, direction):
+def save_encoder_steps_data_to_csv(diameter_mm, speed, target_steps, angle, direction, tilt):
     """
     Save step-based encoder data to the specific steps CSV file.
     
@@ -489,9 +500,10 @@ def save_encoder_steps_data_to_csv(diameter_mm, speed, target_steps, angle, dire
         target_steps: Target steps for movement
         angle: Measured angular displacement (non-negative)
         direction: Movement direction ('cw' or 'ccw')
+        tilt: Tilt angle value from visuotactile sensor
     """
     # Use the same file as main_thin.py for consistency
-    csv_file_path = os.path.join("gripper_complete", "encoder_data_steps.csv")
+    csv_file_path = os.path.join("gripper_test", "encoder_data_steps.csv")
     
     # Ensure directory exists
     os.makedirs(os.path.dirname(csv_file_path), exist_ok=True)
@@ -501,7 +513,7 @@ def save_encoder_steps_data_to_csv(diameter_mm, speed, target_steps, angle, dire
     
     try:
         with open(csv_file_path, 'a', newline='') as csvfile:
-            fieldnames = ['diameter', 'speed', 'step', 'angle', 'direction']
+            fieldnames = ['diameter', 'speed', 'step', 'measured_angle', 'direction', 'tilt']
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             
             # Write header if file is new
@@ -514,7 +526,8 @@ def save_encoder_steps_data_to_csv(diameter_mm, speed, target_steps, angle, dire
                 'speed': speed,
                 'step': target_steps,
                 'measured_angle': f"{abs(angle):.2f}",  # Ensure non-negative angle
-                'direction': direction
+                'direction': direction,
+                'tilt': tilt
             })
             
         print(f"💾 Step-based data saved: {diameter_mm}mm | {target_steps} steps | {abs(angle):.2f}° | {direction.upper()}")

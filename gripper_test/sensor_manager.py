@@ -733,7 +733,7 @@ class RotaryEncoderManager:
             print(f"⚠ Recording disabled: Gripper is open ({gripper_closure_percent:.1f}% closed)")
             return
         
-        # Check diameter constraint: only record for diameters >= 1mm
+        # Check diameter constraint: only record for diameters >= 1mm (allow 1mm for step-based control)
         if self.recording_diameter < 1.0:
             print(f"⚠ Recording disabled: Diameter {self.recording_diameter}mm < 1mm (not supported in this script)")
             return
@@ -810,48 +810,27 @@ class RotaryEncoderManager:
         # Store the low velocity angle for step-based control before direction processing
         low_velocity_measured_angle = measured_angle
         
-        # Calculate angle change from initial to final position
-        # Note: The user manually zeros the encoder before each operation,
-        # and the encoder is FIXED to CW direction (always increases clockwise)
+        # Calculate angular displacement using the robust displacement function
+        # This eliminates the need for complex direction interpretation logic
         final_encoder_angle = measured_angle  # This is the encoder reading after rotation
         
-        # For angle-based control, apply direction interpretation logic
-        # For step-based control, preserve the low velocity angle
-        if not self.is_step_based:
-            # Apply direction interpretation only for angle-based control (2-5mm)
-            if self.recording_direction == 'cw':
-                # CW rotation: encoder increases normally
-                # Direct reading represents the rotation magnitude
-                if final_encoder_angle <= 180:
-                    measured_angle = final_encoder_angle
-                    wrap_status = "CW - No wrap"
-                else:
-                    # Large CW rotation or wraparound
-                    complement_angle = 360 - final_encoder_angle
-                    if complement_angle < final_encoder_angle:
-                        measured_angle = complement_angle
-                        wrap_status = "CW - Wrapped (360° crossing)"
-                    else:
-                        measured_angle = final_encoder_angle
-                        wrap_status = "CW - Large rotation"
-            
-            else:  # CCW rotation
-                # CCW rotation: motor goes CCW but encoder still increases CW
-                # This means the encoder reading represents the "remaining" angle
-                # e.g., 90° CCW rotation would show as 270° on CW-fixed encoder
-                if final_encoder_angle <= 180:
-                    # Small encoder reading during CCW likely means small CCW rotation
-                    measured_angle = final_encoder_angle
-                    wrap_status = "CCW - Small rotation"
-                else:
-                    # Large encoder reading during CCW means we went CCW and encoder
-                    # measured the complement (360° - actual_ccw_rotation)
-                    measured_angle = 360 - final_encoder_angle
-                    wrap_status = "CCW - Complement reading"
-        else:
-            # For step-based control, preserve the low velocity angle
-            measured_angle = low_velocity_measured_angle
-            wrap_status = "Step-based - Low velocity angle preserved"
+        # Calculate the actual angular displacement from start to end
+        # This handles all wrapping cases automatically and reliably
+        angular_displacement = calculate_angular_displacement(
+            self.recording_initial_encoder_angle,
+            final_encoder_angle,
+            self.recording_direction
+        )
+        
+        # Use the calculated displacement as the measured angle for both control modes
+        measured_angle = angular_displacement
+        
+        # Debug output for fixed CW encoder behavior
+        encoder_increase = final_encoder_angle - self.recording_initial_encoder_angle
+        if encoder_increase < 0:
+            encoder_increase += 360.0
+        
+        wrap_status = f"{self.recording_direction.upper()} displacement: {self.recording_initial_encoder_angle:.1f}° → {final_encoder_angle:.1f}° (encoder +{encoder_increase:.1f}°) = {angular_displacement:.1f}° actual displacement"
         
         print(f"🔄 {self.recording_direction.upper()}: Motor Initial={self.recording_initial_angle:.1f}° | Encoder Start={self.recording_initial_encoder_angle:.1f}° | Encoder End={final_encoder_angle:.1f}° | Measured Rotation={measured_angle:.1f}° ({wrap_status})")
         print(f"📍 Direction determined by user input: {self.recording_direction.upper()} (A=CCW, D=CW)")
@@ -864,7 +843,7 @@ class RotaryEncoderManager:
             error = 0.0  # No error calculation for step-based control
             dynamic_threshold = 999.0  # Large threshold to always accept step-based measurements
         else:
-            # For angle-based control, calculate error against target angle
+            # For angle-based control, calculate error against target angle using displacement
             error = measured_angle - self.recording_target_angle
             # Calculate dynamic threshold: half of the target angle
             dynamic_threshold = abs(self.recording_target_angle) / 2.0
@@ -875,22 +854,19 @@ class RotaryEncoderManager:
             if self.is_step_based:
                 print(f"📊 Step-based control: Saving data in steps format")
                 
-                # Calculate angular displacement using start and end encoder readings
-                angular_displacement = calculate_angular_displacement(
-                    self.recording_initial_encoder_angle,
-                    low_velocity_measured_angle,
-                    self.recording_direction
-                )
+                # Use the already calculated angular displacement (consistent with angle-based control)
+                step_based_displacement = measured_angle
                 
-                print(f"📐 Displacement calculation: {self.recording_initial_encoder_angle:.1f}° → {low_velocity_measured_angle:.1f}° = {angular_displacement:.1f}° ({self.recording_direction.upper()})")
+                print(f"📐 Displacement calculation: {self.recording_initial_encoder_angle:.1f}° → {final_encoder_angle:.1f}° = {step_based_displacement:.1f}° ({self.recording_direction.upper()})")
                 
                 # Save to steps CSV format
                 save_encoder_steps_data_to_csv(
                     self.recording_diameter,
                     self.recording_motor_speed,
                     self.recording_target_steps,
-                    angular_displacement,
-                    self.recording_direction
+                    step_based_displacement,
+                    self.recording_direction,
+                    self.recording_tilt
                 )
                 
                 # Update consecutive saves counter for step-based control
@@ -909,7 +885,7 @@ class RotaryEncoderManager:
                 self.latest_saved_data = {
                     'initial_angle': round(self.recording_initial_angle, 2),
                     'target_angle': round(self.recording_target_steps, 2),  # Display steps as "target"
-                    'measured_angle': round(angular_displacement, 2),  # Show the actual displacement saved to CSV
+                    'measured_angle': round(step_based_displacement, 2),  # Show the actual displacement saved to CSV
                     'error': round(error, 2),
                     'direction': self.recording_direction,
                     'saved': True,
@@ -924,25 +900,20 @@ class RotaryEncoderManager:
                 )
             else:
                 # Normal case for diameters >= 2mm: save to CSV and create plot
-                # Calculate angular displacement using start and end encoder readings  
-                encoder_displacement = calculate_angular_displacement(
-                    self.recording_initial_encoder_angle,
-                    low_velocity_measured_angle,
-                    self.recording_direction
-                )
+                # Use the already calculated angular displacement (consistent approach)
+                encoder_displacement = measured_angle
                 
-                print(f"📐 Encoder displacement: {self.recording_initial_encoder_angle:.1f}° → {low_velocity_measured_angle:.1f}° = {encoder_displacement:.1f}° ({self.recording_direction.upper()})")
+                print(f"📐 Encoder displacement: {self.recording_initial_encoder_angle:.1f}° → {final_encoder_angle:.1f}° = {encoder_displacement:.1f}° ({self.recording_direction.upper()})")
                 
-                # For angle-based control, use the processed measured_angle for error calculation
-                # but show both values for comparison
-                print(f"📐 Processed measured angle: {measured_angle:.1f}° (for error calculation)")
+                # For angle-based control, use the displacement for error calculation
+                print(f"📐 Using displacement for error calculation: {encoder_displacement:.1f}°")
                 
                 # Calculate steps using calibration data
                 steps_per_degree = get_steps_per_degree(self.recording_diameter, self.recording_direction)
                 calculated_steps = self.recording_target_angle * steps_per_degree
                 calculated_steps = round(calculated_steps / 0.0625) * 0.0625
                 
-                # Prepare data row for CSV (keep using measured_angle for consistency with existing data)
+                # Prepare data row for CSV (use displacement consistently)
                 data_row = [
                     self.recording_diameter,
                     round(self.recording_grip_strength, 4),
@@ -950,7 +921,7 @@ class RotaryEncoderManager:
                     round(calculated_steps, 4),
                     round(self.recording_initial_angle, 2),
                     round(self.recording_target_angle, 2),
-                    round(measured_angle, 2),
+                    round(encoder_displacement, 2),  # Use displacement instead of processed measured_angle
                     round(error, 2),
                     round(self.recording_tilt, 1)  # Add tilt column
                 ]
@@ -974,7 +945,7 @@ class RotaryEncoderManager:
                 self.latest_saved_data = {
                     'initial_angle': round(self.recording_initial_angle, 2),
                     'target_angle': round(self.recording_target_angle, 2),
-                    'measured_angle': round(measured_angle, 2),
+                    'measured_angle': round(encoder_displacement, 2),  # Use displacement consistently
                     'error': round(error, 2),
                     'direction': self.recording_direction,
                     'saved': True,
@@ -992,27 +963,23 @@ class RotaryEncoderManager:
             if self.is_step_based:
                 print(f"⚠ WARNING: Step-based control should never discard data! Error: {error:.1f}°, Threshold: {dynamic_threshold:.1f}°")
                 print(f"⚠ This indicates a logic error - saving data anyway for 1mm case")
-                # Calculate angular displacement for step-based control using proper method
-                angular_displacement = calculate_angular_displacement(
-                    self.recording_initial_encoder_angle,
-                    low_velocity_measured_angle,
-                    self.recording_direction
-                )
-                # Force save the data for step-based control
+                # Force save the data for step-based control using displacement
+                step_based_displacement = measured_angle  # Already calculated displacement
                 save_encoder_steps_data_to_csv(
                     self.recording_diameter,
                     self.recording_motor_speed,
                     self.recording_target_steps,
-                    angular_displacement,
-                    self.recording_direction
+                    step_based_displacement,
+                    self.recording_direction,
+                    self.recording_tilt
                 )
                 target_display = round(self.recording_target_steps, 2)
-                measured_display = round(angular_displacement, 2)  # Show displacement, not raw angle
+                measured_display = round(step_based_displacement, 2)  # Show displacement, not raw angle
                 saved_status = True
             else:
                 print(f"⚠ Data discarded: error {error:.1f}° exceeds ±{dynamic_threshold:.1f}° threshold (half of target {self.recording_target_angle:.1f}°)")
                 target_display = round(self.recording_target_angle, 2)
-                measured_display = round(measured_angle, 2)  # Show processed angle for angle-based
+                measured_display = round(measured_angle, 2)  # Show displacement for angle-based
                 saved_status = False
             
             # Update latest saved data to show operation result

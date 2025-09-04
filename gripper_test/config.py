@@ -26,8 +26,13 @@ ENCODER_CALIBRATION = {
 
 # --- Main Configuration ---
 CONFIG = {
-    # Stepper motor configuration
-    "stepper_port": "COM9",
+    # === PORT ASSIGNMENTS ===
+    # Update these ports as needed for your hardware setup
+    "stepper_port": "COM9",        # Stepper motor controller port
+    "gripper_port": "COM3",        # DM gripper motor port  
+    "encoder_port": "COM11",       # Rotary encoder port
+    
+    # === STEPPER MOTOR CONFIGURATION ===
     "stepper_baud_rate": 115200,
     "microsteps": 16,
     "max_steps": 1000,
@@ -35,32 +40,30 @@ CONFIG = {
     "initial_speed": 50,
     "homing_speed": 500,  # Fast speed for homing and initialization operations
     
-    # Control mode configuration
+    # === CONTROL MODE CONFIGURATION ===
     "min_diameter_mm": 1.0,
     "max_diameter_mm": 5,
     "initial_diameter_mm": 2,
     
-    # Angle-based control configuration (for diameters 2-5mm)
+    # === ANGLE-BASED CONTROL CONFIGURATION (for diameters 2-5mm) ===
     "angle_increment_deg": 5,
     "initial_target_angle_deg": 90,  # Default target angle setting
     "max_angle_deg": 180,  # Maximum rotation angle from center
     
-    # Step-based control configuration (for diameters ≤1mm)
+    # === STEP-BASED CONTROL CONFIGURATION (for diameters ≤1mm) ===
     "step_increment": 5,
     "initial_target_steps": 10,
     "max_steps_movement": 500,
     
-    # Gripper motor configuration
-    "gripper_port": "COM3",
+    # === GRIPPER MOTOR CONFIGURATION ===
     "gripper_baud_rate": 921600,
     "gripper_motor_id": 0x01,
     "gripper_can_id": 0x11,
     
-    # Sensor configuration
+    # === SENSOR CONFIGURATION ===
     "sensor_serial_id": 0,
     
-    # Encoder configuration
-    "encoder_port": "COM11",
+    # === ENCODER CONFIGURATION ===
     "encoder_slave_address": 1,
     "encoder_baudrate": 9600,
     "encoder_read_register": 0,
@@ -108,5 +111,5 @@ MANUAL_TILT_CONFIG = {
 PATHS = {
     "encoder_data_dir": "rotary_encoder",
     "encoder_plot_dir": "rotary_encoder/plot",
-    "encoder_csv_file": "gripper_complete/encoder_data.csv",
+    "encoder_csv_file": "gripper_test/encoder_data.csv",
 }

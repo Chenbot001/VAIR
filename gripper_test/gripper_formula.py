@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 
 # Load the CSV file
-df = pd.read_csv('gripper_complete\gripper_data.csv')
+df = pd.read_csv('gripper_test\gripper_data.csv')
 
 # Ensure required columns exist
 required_cols = ['diameter', 'steps', 'tilt', 'measured_angle']
@@ -27,4 +27,4 @@ df['predicted_angle'] = df.apply(compute_predicted, axis=1)
 df['error'] = round(df['predicted_angle'] - df['measured_angle'],2)
 
 # Save to a new CSV (or overwrite the original)
-df.to_csv('gripper_complete\gripper_data.csv', index=False)
+df.to_csv('gripper_test\gripper_data.csv', index=False)

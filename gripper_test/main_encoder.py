@@ -214,8 +214,13 @@ class GripperControlSystem:
         
         # Gripper status
         gripper_status = "Connected" if hw_status['gripper']['connected'] else "Disconnected"
+        gripper_closure = hw_status['gripper']['closure_percent']
+        homing_allowed = gripper_closure <= 5.0  # Same threshold as in key handler
+        homing_status = "✅ ALLOWED" if homing_allowed else "❌ BLOCKED"
+        
         print("GRIPPER CONTROL (DM Motor):")
-        print(f"  Closure: {hw_status['gripper']['closure_percent']:.1f}% | Position: {hw_status['gripper']['position_rad']:.3f} rad")
+        print(f"  Closure: {gripper_closure:.1f}% | Position: {hw_status['gripper']['position_rad']:.3f} rad")
+        print(f"  Homing Status: {homing_status} (requires ≤5% closure)")
         print(f"  Status: {gripper_status}")
         print(f"  Last Message: {hw_status['gripper']['last_message']}")
         
@@ -285,7 +290,8 @@ class GripperControlSystem:
         print("  Sensor:    [B] Calibrate Baseline")
         print("  Tilt:      [J] Decrease | [K] Increase | [T] Toggle Mode")
         print("  Encoder:   [Z] Zero")
-        print("  General:   [SPACE] STOP | [X] Zero Motor Pos | [ESC] Quit")
+        print("  General:   [H] Home Motors* | [SPACE] STOP | [X] Zero Motor Pos | [ESC] Quit")
+        print("             *Homing only works when gripper is fully open")
         print("=" * 60)
     
     def on_press(self, key):
@@ -477,6 +483,42 @@ class GripperControlSystem:
                 self.state.sensors.toggle_manual_tilt_mode()
 
             # --- Utility Commands ---
+            elif key.char == 'h':  # Home stepper motors (safety constraint: gripper must be fully open)
+                gripper_closure = self.state.hardware.gripper.gripper_closure_percent
+                if gripper_closure <= 5.0:  # Allow small tolerance for "fully open" (≤5%)
+                    if self.state.hardware.stepper.connected:
+                        print(f"🏠 Starting Python homing sequence...")
+                        print(f"⚠ Please wait ~6 seconds for homing to complete...")
+                        
+                        # Perform Python-based homing sequence
+                        homing_speed = CONFIG["homing_speed"]
+                        
+                        # Step 1: Move both motors to maximum position (1000)
+                        print(f"   Step 1/3: Moving to max position (1000, 1000)")
+                        self.state.hardware.stepper.send_move_command(1000, 1000, homing_speed)
+                        time.sleep(1.5)  # Increased delay to ensure movement completes
+                        
+                        # Step 2: Move both motors to minimum position (0)
+                        print(f"   Step 2/3: Moving to min position (0, 0)")
+                        self.state.hardware.stepper.send_move_command(0, 0, homing_speed)
+                        time.sleep(2.5)  # Increased delay to ensure movement completes
+                        
+                        # Step 3: Move both motors to center position (500, 500)
+                        print(f"   Step 3/3: Moving to center position (500, 500)")
+                        self.state.hardware.stepper.send_move_command(500, 500, homing_speed)
+                        time.sleep(1.0)  # Allow time for final positioning
+                        
+                        # Reset angle tracking to zero
+                        self.state.hardware.stepper.current_angle_deg = 0.0
+                        
+                        self.state.hardware.stepper.last_message = "Python homing sequence completed"
+                        print(f"✅ Homing sequence completed - motors at center, angle reset to 0°")
+                    else:
+                        print(f"❌ Cannot home: Stepper motors not connected")
+                else:
+                    print(f"⚠ Motor homing BLOCKED: Gripper must be fully open (currently {gripper_closure:.1f}% closed)")
+                    print(f"📋 Press [O] to open gripper first, then retry homing with [H]")
+                    self.state.hardware.stepper.last_message = f"Homing blocked: gripper {gripper_closure:.1f}% closed"
             elif key.char == 'x':  # Reset stepper position to center and angle
                 self.state.hardware.stepper.reset_to_center()
 

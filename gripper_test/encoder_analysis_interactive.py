@@ -61,17 +61,17 @@ class EncoderAnalysisGUI:
         plot_config_frame.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=10)
         
         # Variable selection
-        ttk.Label(plot_config_frame, text="X-axis Variable:").grid(row=0, column=0, sticky=tk.W)
+        ttk.Label(plot_config_frame, text="X Variable:").grid(row=0, column=0, sticky=tk.W)
         self.x_var = tk.StringVar()
         self.x_var_combo = ttk.Combobox(plot_config_frame, textvariable=self.x_var)
         self.x_var_combo.grid(row=0, column=1, sticky=(tk.W, tk.E))
         
-        ttk.Label(plot_config_frame, text="Y-axis Variable:").grid(row=1, column=0, sticky=tk.W)
+        ttk.Label(plot_config_frame, text="Y Variable:").grid(row=1, column=0, sticky=tk.W)
         self.y_var = tk.StringVar()
         self.y_var_combo = ttk.Combobox(plot_config_frame, textvariable=self.y_var)
         self.y_var_combo.grid(row=1, column=1, sticky=(tk.W, tk.E))
         
-        ttk.Label(plot_config_frame, text="Color By:").grid(row=2, column=0, sticky=tk.W)
+        ttk.Label(plot_config_frame, text="Group By:").grid(row=2, column=0, sticky=tk.W)
         self.color_var = tk.StringVar()
         self.color_var_combo = ttk.Combobox(plot_config_frame, textvariable=self.color_var)
         self.color_var_combo.grid(row=2, column=1, sticky=(tk.W, tk.E))
@@ -95,6 +95,12 @@ class EncoderAnalysisGUI:
         plot_type_combo = ttk.Combobox(plot_config_frame, textvariable=self.plot_type, 
                                        values=['scatterplot', 'boxplot'])
         plot_type_combo.grid(row=5, column=1, sticky=(tk.W, tk.E))
+        
+        # Custom plot title
+        ttk.Label(plot_config_frame, text="Custom Title:").grid(row=6, column=0, sticky=tk.W)
+        self.custom_title = tk.StringVar()
+        self.custom_title_entry = ttk.Entry(plot_config_frame, textvariable=self.custom_title)
+        self.custom_title_entry.grid(row=6, column=1, sticky=(tk.W, tk.E))
         
         # Plot options
         options_frame = ttk.LabelFrame(control_frame, text="Plot Options", padding="10")
@@ -211,6 +217,17 @@ class EncoderAnalysisGUI:
         control_var = self.control_var.get()
         fixed_val_str = self.fixed_val.get()
         
+        # Determine plot title
+        custom_title = self.custom_title.get().strip()
+        if custom_title:
+            plot_title = custom_title
+        else:
+            # Use default title format
+            if control_var and fixed_val_str:
+                plot_title = f'{y_var} vs. {x_var}\n(where {control_var} = {fixed_val_str})'
+            else:
+                plot_title = f'{y_var} vs. {x_var}'
+        
         if control_var and fixed_val_str:
             try:
                 # Convert fixed value to the correct dtype
@@ -228,12 +245,12 @@ class EncoderAnalysisGUI:
                     fixed_val = str(fixed_val_str)
                 
                 plot_df = self.df[self.df[control_var] == fixed_val]
-                ax.set_title(f'{y_var} vs. {x_var}\n(where {control_var} = {fixed_val})')
             except (ValueError, KeyError) as e:
                 messagebox.showerror("Error", f"Invalid fixed value or variable: {e}")
                 return
-        else:
-            ax.set_title(f'{y_var} vs. {x_var}')
+        
+        # Set the plot title
+        ax.set_title(plot_title)
         # --- END REVISION ---
         
         color_var = self.color_var.get() if self.color_var.get() else None
@@ -404,25 +421,32 @@ class EncoderAnalysisGUI:
         ax.set_xlabel(x_var.replace('_', ' ').title(), fontsize=12, fontweight='bold')
         ax.set_ylabel(y_var.replace('_', ' ').title(), fontsize=12, fontweight='bold')
         ax.grid(True, which='both', linestyle='--', linewidth=0.5, alpha=0.7)
-        
+
         # Set background color for better contrast
         ax.set_facecolor('#F8F8F8')
-        
-        if self.legend_var.get() and color_var:
-            legend = ax.legend(frameon=True, fancybox=True, shadow=True)
-            legend.get_frame().set_facecolor('white')
-            legend.get_frame().set_alpha(0.9)
-            
+
+        # --- MODIFIED LEGEND HANDLING LOGIC ---
+        if self.legend_var.get():
+            legend = ax.get_legend()
+
+            if legend:
+                # Style the existing legend properties without trying to set fancybox again.
+                legend.set_visible(True)
+                legend.get_frame().set_facecolor('white')
+                legend.get_frame().set_alpha(0.9)
+                legend.set_frame_on(True)
+                legend.shadow = True # Set shadow property directly
+
         if self.error_line_var.get() and y_var == 'error':
             ax.axhline(y=0, color='red', linestyle='--', alpha=0.8, linewidth=2)
-            
+
         # Improve tick labels
         ax.tick_params(axis='both', which='major', labelsize=10)
-        
+
         # Set title with better formatting
         if ax.get_title():
             ax.set_title(ax.get_title(), fontsize=14, fontweight='bold', pad=20)
-            
+                
     def save_plot(self):
         """Save the current plot to file."""
         if self.figure is None or not self.figure.get_axes():
@@ -433,7 +457,7 @@ class EncoderAnalysisGUI:
             title="Save plot",
             defaultextension=".png",
             filetypes=[("PNG files", "*.png"), ("PDF files", "*.pdf"), 
-                      ("SVG files", "*.svg"), ("All files", "*.*")]
+                    ("SVG files", "*.svg"), ("All files", "*.*")]
         )
         
         if filename:

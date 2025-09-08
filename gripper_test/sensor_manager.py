@@ -535,6 +535,28 @@ class DaimonManager:
         
         self.close_sensor_windows()
 
+    def get_latest_deformation(self):
+        """Get the latest deformation data from the sensor"""
+        if not self.sensor or not SENSOR_AVAILABLE:
+            return None
+        
+        try:
+            return self.sensor.getDeformation2D()
+        except Exception as e:
+            self.last_message = f"ERR: Failed to get deformation data: {e}"
+            return None
+
+    def get_latest_shear(self):
+        """Get the latest shear data from the sensor"""
+        if not self.sensor or not SENSOR_AVAILABLE:
+            return None
+        
+        try:
+            return self.sensor.getShear()
+        except Exception as e:
+            self.last_message = f"ERR: Failed to get shear data: {e}"
+            return None
+
 
 class RotaryEncoderManager:
     """Manages rotary encoder operations"""

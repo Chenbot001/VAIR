@@ -71,7 +71,7 @@ def save_force_data_to_json(timestamp, mean_fz, peak_intensity, deformation_mesh
     
     # Create filename with timestamp
     timestamp_str = time.strftime("%Y%m%d_%H%M%S", time.localtime(timestamp))
-    filename = f"force_data_{timestamp_str}_round.json"
+    filename = f"grip_pull_{timestamp_str}.json"
     
     # Create full file path
     file_path = os.path.join(data_dir, filename)

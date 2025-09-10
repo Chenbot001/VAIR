@@ -31,22 +31,21 @@ CONFIG = {
     "gripper_baud_rate": 921600,
     "gripper_motor_id": 0x01,
     "gripper_can_id": 0x11,
+    "gripper_default_open_percent": 50,  # Default "open" position (50% closed to save time)
     
     # === SENSOR CONFIGURATION ===
     "sensor_serial_id": 0,
     
     # === UR ROBOT CONFIGURATION ===
     "ur_robot_ip": "192.168.3.4",
-    "ur_robot_init_pose": [0.43, -0.11, 0.40, 
-                          -1.1113946900002296, 2.9307050851101204, -0.07006688172175954],
     "ur_robot_step_size": 0.005,
-    "ur_robot_time_duration": 0.1,
+    "ur_robot_time_duration": 0.2,
     "ur_robot_lookahead_time": 0.2,
-    "ur_robot_gain": 100,
+    "ur_robot_gain": 300,
 }
 
 # Gripper position limits (in radians)
-GRIPPER_MIN_POS = -1.38  # Fully closed position
+GRIPPER_MIN_POS = -1.37  # Fully closed position
 GRIPPER_MAX_POS = 0.0    # Fully open position
 
 # Adaptive gripping configuration
@@ -65,11 +64,18 @@ DISPLAY_CONFIG = {
     "sensor_image_update_rate_hz": 10,  # How often to update sensor images (lower = less CPU usage)
 }
 
-# Manual tilt configuration for calibration purposes
-MANUAL_TILT_CONFIG = {
-    "enabled": True,  # When True, uses manual tilt instead of calculated centerline angle
-    "current_value": 0,  # Current manual tilt value in degrees
-    "valid_values": [0, 10, 20, 30],  # Valid tilt values that can be toggled
+# Centerline detection configuration
+CENTERLINE_CONFIG = {
+    "smoothing_alpha": 0.7,  # Exponential smoothing factor (0.0 = no smoothing, 1.0 = no new data)
+    "history_length": 5,     # Number of frames to average for rolling smoothing
+    "min_contour_area": 5,   # Minimum contour area for centerline detection
 }
 
 
+# Acupuncture experiment poses
+ACU_POSES = {
+    "s_u": [0.348, -0.445, 0.270, 0.723, -1.774, 1.817],
+    "s_d": [0.348, -0.445, 0.216, 0.723, -1.774, 1.817],
+    "l_u": [0.418, -0.445, 0.270, 0.723, -1.774, 1.817],
+    "l_d": [0.418, -0.445, 0.216, 0.723, -1.774, 1.817],
+}

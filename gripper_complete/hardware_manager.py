@@ -317,8 +317,16 @@ class GripperMotorManager:
             self.gripper_closure_percent = percentage
             self.gripper_position_rad = safe_pos
             
-            if percentage > 0:
-                # Always use adaptive gripping for closing operations
+            # Determine if this is an opening or closing operation
+            # If a velocity is explicitly provided and it matches opening_velocity, treat as opening
+            # OR if moving to default open position, treat as opening
+            is_opening_operation = (
+                velocity == ADAPTIVE_GRIPPING_CONFIG["opening_velocity"] or 
+                percentage <= CONFIG["gripper_default_open_percent"]
+            )
+            
+            if percentage > 0 and not is_opening_operation:
+                # Use adaptive gripping for closing operations (above default open position)
                 self.last_message = f"Starting adaptive grip to {percentage:.1f}%"
                 # Start adaptive gripping in a separate thread
                 grip_thread = threading.Thread(
@@ -329,10 +337,10 @@ class GripperMotorManager:
                 self.gripping_thread = grip_thread
                 grip_thread.start()
             else:
-                # Direct movement for opening
+                # Direct movement for opening operations (0% or default open position or explicit opening velocity)
                 vel = velocity or ADAPTIVE_GRIPPING_CONFIG["opening_velocity"]
                 self.motor_control.control_Pos_Vel(self.motor, safe_pos, vel)
-                self.last_message = f"Moving to {percentage:.1f}% closed ({safe_pos:.3f} rad)"
+                self.last_message = f"Moving to {percentage:.1f}% closed ({safe_pos:.3f} rad) - Opening operation"
             
         except Exception as e:
             self.last_message = f"ERR: Gripper move failed: {e}"
@@ -442,7 +450,6 @@ class URRobotManager:
         self.last_message = ""
         self.current_pose = None
         self.robot_ip = CONFIG["ur_robot_ip"]
-        self.init_pose = CONFIG["ur_robot_init_pose"]
         self.step_size = CONFIG["ur_robot_step_size"]
         self.time_duration = CONFIG["ur_robot_time_duration"]
         self.lookahead_time = CONFIG["ur_robot_lookahead_time"]
@@ -485,16 +492,21 @@ class URRobotManager:
             self.rtde_r = rtde_receive.RTDEReceiveInterface(self.robot_ip)
             self.rtde_c = rtde_control.RTDEControlInterface(self.robot_ip)
             
-            # Get initial pose
-            initial_pose = self.rtde_r.getActualTCPPose()
+            # Get current pose for dynamic initialization
+            current_pose = self.rtde_r.getActualTCPPose()
             
-            # Set robot to initial pose from config
-            self.rtde_c.servoL(self.init_pose, 0.1, 0.08, self.time_duration, self.lookahead_time, self.gain)
+            # Create dynamic initial pose by adding 0.1 to Z coordinate
+            # This provides visible feedback while preventing abrupt motion
+            dynamic_init_pose = current_pose.copy()
+            dynamic_init_pose[2] += 0.03  # Add 0.03m (3cm) to Z coordinate
+
+            # Move to dynamic initial pose
+            self.rtde_c.servoL(dynamic_init_pose, 0.1, 0.08, self.time_duration, self.lookahead_time, self.gain)
             
-            self.current_pose = self.init_pose.copy()
+            self.current_pose = dynamic_init_pose.copy()
             self.connected = True
-            self.last_message = f"Connected to UR robot at {self.robot_ip}"
-            print(f"✓ UR robot connected at {self.robot_ip}")
+            self.last_message = f"Connected"
+            print(f"✓ UR robot connected at {self.robot_ip} - initialization complete")
             return True
             
         except Exception as e:
@@ -556,6 +568,26 @@ class URRobotManager:
                 
         except Exception as e:
             self.last_message = f"ERR: Move failed: {e}"
+    
+    def move_to_pose(self, target_pose):
+        """Move robot to a specific pose (position + orientation)"""
+        if not self.connected or not self.rtde_c:
+            self.last_message = "ERR: UR robot not connected"
+            return False
+        
+        try:
+            # Execute move to the target pose
+            self.rtde_c.servoL(target_pose, 0.1, 0.08, self.time_duration, self.lookahead_time, self.gain)
+            self.current_pose = target_pose.copy()
+            
+            # Format position for display
+            x, y, z = target_pose[0], target_pose[1], target_pose[2]
+            self.last_message = f"Moved to pose: X={x:.3f}, Y={y:.3f}, Z={z:.3f}"
+            return True
+            
+        except Exception as e:
+            self.last_message = f"ERR: Pose move failed: {e}"
+            return False
 
 
 class HardwareManager:
@@ -596,7 +628,7 @@ class HardwareManager:
         if self.gripper.connected:
             try:
                 print("Opening gripper to release objects...")
-                self.gripper.move_to_percentage(0)  # Open to 0%
+                self.gripper.move_to_percentage(CONFIG["gripper_default_open_percent"])  # Open to default position
                 time.sleep(1)  # Give time for gripper to open
             except:
                 print("❌ Failed to open gripper")

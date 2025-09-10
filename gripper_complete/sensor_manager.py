@@ -24,13 +24,22 @@ except ImportError:
     CV2_AVAILABLE = False
     print("Warning: cv2 not available. Image display functions will be disabled.")
 
-
+# Try to import Bota sensor dependencies
+try:
+    import pysoem
+    import ctypes
+    import struct
+    import collections
+    BOTA_AVAILABLE = True
+except ImportError:
+    BOTA_AVAILABLE = False
+    print("Warning: Bota sensor dependencies not available. Force sensing disabled.")
 
 # Add paths for local imports
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'daimon', 'dmrobotics'))
 
 from config import (
-    CONFIG, DISPLAY_CONFIG, ADAPTIVE_GRIPPING_CONFIG, MANUAL_TILT_CONFIG
+    CONFIG, DISPLAY_CONFIG, ADAPTIVE_GRIPPING_CONFIG, CENTERLINE_CONFIG
 )
 
 # Import sensor functionality
@@ -60,7 +69,13 @@ class DaimonManager:
         self.centerline_points = None
         self.largest_contour = None
         self.angle_offset = None
-        self.contact_threshold = 0.15
+        self.contact_threshold = 0.25
+        
+        # Centerline smoothing and persistence variables
+        self.last_valid_angle_offset = None
+        self.angle_history = []
+        self.max_history_length = CENTERLINE_CONFIG["history_length"]
+        self.smoothing_alpha = CENTERLINE_CONFIG["smoothing_alpha"]
 
     def connect(self):
         """Initialize and configure the depth sensor"""
@@ -147,18 +162,32 @@ class DaimonManager:
             self.last_message = f"ERR: Calibration failed: {e}"
             return False
     
-    def compute_centerline_angle(self, centerline_points):
+    def compute_centerline_angle(self, centerline_points, state=None):
         """
-        Compute the angle offset of the centerline from vertical (0 degrees baseline).
+        Compute the angle offset of the centerline from vertical (0 degrees baseline) with smoothing.
         
         Args:
             centerline_points: Array of points along the centerline
+            state: System state object to check gripper status
             
         Returns:
-            angle_offset: Absolute angle offset from vertical in degrees, or None if no centerline
+            angle_offset: Smoothed angle offset from vertical in degrees, last valid angle if gripping, or None if open and no detection
         """
         if not NUMPY_AVAILABLE or centerline_points is None or len(centerline_points) < 2:
-            return None
+            # Failed detection - behavior depends on gripper state
+            if state and hasattr(state, 'hardware') and hasattr(state.hardware, 'gripper'):
+                gripper = state.hardware.gripper
+                
+                # If gripper is actively gripping or closed significantly, hold last valid angle
+                if gripper.is_gripping or gripper.gripper_closure_percent > CONFIG["gripper_default_open_percent"]:
+                    # Gripper is closed/gripping - hold the last valid angle
+                    return self.last_valid_angle_offset
+                else:
+                    # Gripper is open - reset to None (N/A) since no object should be present
+                    return None
+            else:
+                # Fallback to old behavior if state is not available
+                return self.last_valid_angle_offset
         
         # Use first and last points to determine the overall line direction
         start_point = centerline_points[0]
@@ -183,8 +212,60 @@ class DaimonManager:
         elif angle_degrees < -90:
             angle_degrees = -180 - angle_degrees
         
-        # Return absolute value for positive offset regardless of direction
-        return abs(angle_degrees)
+        # Take absolute value for positive offset regardless of direction
+        raw_angle = abs(angle_degrees)
+        
+        # Apply smoothing filter
+        smoothed_angle = self._apply_angle_smoothing(raw_angle)
+        
+        # Update last valid angle
+        self.last_valid_angle_offset = smoothed_angle
+        
+        return smoothed_angle
+    
+    def _apply_angle_smoothing(self, new_angle):
+        """
+        Apply smoothing filter to reduce angle fluctuations.
+        Uses both exponential smoothing and rolling average.
+        
+        Args:
+            new_angle: New raw angle measurement
+            
+        Returns:
+            smoothed_angle: Filtered angle value
+        """
+        if not NUMPY_AVAILABLE:
+            return new_angle
+        
+        # Add to history buffer
+        self.angle_history.append(new_angle)
+        
+        # Keep history buffer size limited
+        if len(self.angle_history) > self.max_history_length:
+            self.angle_history.pop(0)
+        
+        # Calculate rolling average
+        rolling_average = np.mean(self.angle_history)
+        
+        # Apply exponential smoothing with previous valid angle if available
+        if self.last_valid_angle_offset is not None:
+            # Exponential smoothing: new_value = alpha * old_value + (1 - alpha) * new_value
+            smoothed_angle = (self.smoothing_alpha * self.last_valid_angle_offset + 
+                            (1 - self.smoothing_alpha) * rolling_average)
+        else:
+            # No previous data, use rolling average
+            smoothed_angle = rolling_average
+        
+        return smoothed_angle
+    
+    def reset_centerline_smoothing(self):
+        """
+        Reset the centerline smoothing history and persistent values.
+        Call this when recalibrating or when you want to start fresh.
+        """
+        self.angle_history.clear()
+        self.last_valid_angle_offset = None
+        self.last_message = "Centerline smoothing reset"
     
     def detect_centerline(self, depth_data):
         """
@@ -204,6 +285,11 @@ class DaimonManager:
             # Create binary mask for pixels above threshold
             contact_mask = (depth_data > self.contact_threshold).astype(np.uint8) * 255
             
+            # Apply morphological operations to reduce noise
+            kernel = np.ones((3,3), np.uint8)
+            contact_mask = cv2.morphologyEx(contact_mask, cv2.MORPH_CLOSE, kernel)
+            contact_mask = cv2.morphologyEx(contact_mask, cv2.MORPH_OPEN, kernel)
+            
             # Find contours
             contours, _ = cv2.findContours(contact_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             
@@ -213,8 +299,9 @@ class DaimonManager:
             # Find the largest contour by area
             largest_contour = max(contours, key=cv2.contourArea)
             
-            # Check if contour is large enough to be meaningful
-            if cv2.contourArea(largest_contour) < 10:  # Minimum area threshold
+            # More lenient area threshold to prevent disappearing centerlines
+            min_area_threshold = CENTERLINE_CONFIG["min_contour_area"]
+            if cv2.contourArea(largest_contour) < min_area_threshold:
                 return None, None
             
             # Fit a line to the contour points
@@ -303,13 +390,14 @@ class DaimonManager:
         
         return depth_img_with_centerline
     
-    def add_angle_offset_overlay(self, depth_img, angle_offset):
+    def add_angle_offset_overlay(self, depth_img, angle_offset, centerline_detected):
         """
         Add angle offset value overlay to the depth image.
         
         Args:
             depth_img: The colorized depth image (BGR format)
             angle_offset: The angle offset from vertical in degrees, or None if no centerline
+            centerline_detected: Whether centerline was detected in current frame
             
         Returns:
             The depth image with angle offset value overlaid
@@ -324,14 +412,18 @@ class DaimonManager:
         if angle_offset is not None:
             # Round to nearest 10 degrees for better readability - remove for exact angle
             rounded_angle = round(angle_offset / 10) * 10
-            angle_text = f"Angle Offset: {rounded_angle:.0f} degrees"
+            # Add indicator if using persistent angle vs live detection
+            status_indicator = "Live" if centerline_detected else "Hold"
+            angle_text = f"Angle: {rounded_angle:.0f} degrees ({status_indicator})"
         else:
-            angle_text = "Angle Offset: N/A"
+            # angle_offset is None - this means gripper is open and no detection (N/A case)
+            angle_text = "Angle: N/A (Open)"
         
-        # Set text properties
+        # Set text properties - use green color for all angle displays
         font = cv2.FONT_HERSHEY_SIMPLEX
         font_scale = 0.5
-        color = (255, 255, 255)  # White color in BGR
+        # Always use green color regardless of live vs persistent status
+        color = (0, 255, 0)  # Green in BGR format
         thickness = 1
         
         # Get text size to position it properly
@@ -376,23 +468,7 @@ class DaimonManager:
             'centerline_points_count': len(self.centerline_points) if self.centerline_points is not None else 0
         }
     
-    def get_rounded_tilt_angle(self):
-        """
-        Get the rounded tilt angle (angle offset from vertical) for recording purposes.
-        
-        Returns:
-            float: Rounded tilt angle in degrees, or 0.0 if no angle is available
-        """
-        # Check if manual tilt mode is enabled
-        if MANUAL_TILT_CONFIG.get("enabled", False):
-            return float(MANUAL_TILT_CONFIG.get("current_value", 0))
-        
-        # Otherwise use calculated centerline angle
-        if self.angle_offset is not None:
-            return round(self.angle_offset / 10) * 10
-        return 0.0
-    
-    def display_sensor_images(self):
+    def display_sensor_images(self, state=None):
         """Display concatenated sensor images with centerline detection"""
         if not self.sensor or not SENSOR_AVAILABLE:
             return
@@ -417,15 +493,18 @@ class DaimonManager:
             # Detect centerline from depth data
             self.centerline_points, self.largest_contour = self.detect_centerline(depth)
             
-            # Compute angle offset from vertical
-            self.angle_offset = self.compute_centerline_angle(self.centerline_points)
+            # Track if centerline was detected in current frame
+            centerline_detected_this_frame = self.centerline_points is not None
+            
+            # Compute angle offset from vertical (with smarted persistence based on gripper state)
+            self.angle_offset = self.compute_centerline_angle(self.centerline_points, state)
             
             # Add centerline overlay if detected
             if self.centerline_points is not None:
                 depth_img = self.add_centerline_overlay(depth_img, self.centerline_points, self.largest_contour)
             
-            # Add angle offset overlay to the depth image
-            depth_img = self.add_angle_offset_overlay(depth_img, self.angle_offset)
+            # Add angle offset overlay to the depth image (pass detection status for color coding)
+            depth_img = self.add_angle_offset_overlay(depth_img, self.angle_offset, centerline_detected_this_frame)
             
             # Create black background for deformation and shear arrows
             black_img = np.zeros_like(img)
@@ -508,7 +587,7 @@ class DaimonManager:
             try:
                 if self.sensor and self.connected:
                     self.get_max_depth_intensity()
-                    self.display_sensor_images()
+                    self.display_sensor_images(state)
                     
                     # Read more frequently when gripping is active
                     if hasattr(state, 'hardware') and hasattr(state.hardware, 'gripper') and state.hardware.gripper.is_gripping:
@@ -543,15 +622,475 @@ class DaimonManager:
         except Exception as e:
             self.last_message = f"ERR: Failed to get shear data: {e}"
             return None
+    
+    def get_instantaneous_depth_array(self):
+        """
+        Capture instantaneous depth intensity as a full array of intensities.
+        
+        Returns:
+            numpy.ndarray or None: Full depth intensity array, or None if sensor unavailable
+        """
+        if not self.sensor or not SENSOR_AVAILABLE:
+            self.last_message = "ERR: Sensor not available for depth array capture"
+            return None
+        
+        if not NUMPY_AVAILABLE:
+            self.last_message = "ERR: Numpy not available for depth array capture"
+            return None
+        
+        try:
+            depth_array = self.sensor.getDepth()
+            
+            if depth_array is not None and depth_array.size > 0:
+                # Return a copy to prevent modification of the original data
+                return depth_array.copy()
+            else:
+                self.last_message = "ERR: No depth array data available"
+                return None
+                
+        except Exception as e:
+            self.last_message = f"ERR: Failed to capture depth array: {e}"
+            return None
+    
+    def get_deformation_mesh(self, scale=20.0, grid_n=15):
+        """
+        Capture deformation arrow mesh data with coordinates, magnitudes, and directions.
+        
+        Args:
+            scale (float): Scale factor for arrow vectors (default: 20.0)
+            grid_n (int): Number of arrows per axis (default: 15, creates 15x15 grid = 225 arrows)
+        
+        Returns:
+            dict or None: Dictionary with 'start_coords', 'magnitudes', and 'directions', or None if unavailable
+        """
+        if not self.sensor or not SENSOR_AVAILABLE:
+            self.last_message = "ERR: Sensor not available for deformation mesh capture"
+            return None
+        
+        if not NUMPY_AVAILABLE:
+            self.last_message = "ERR: Numpy not available for deformation mesh capture"
+            return None
+        
+        try:
+            # Get current deformation data
+            deformation = self.sensor.getDeformation2D()
+            
+            if deformation is None:
+                self.last_message = "ERR: No deformation data available"
+                return None
+            
+            # Calculate arrow mesh using the same function from main_bota.py
+            start_coords, magnitudes, directions = self._calculate_arrow_mesh(
+                deformation, scale=scale, grid_n=grid_n
+            )
+            
+            if len(start_coords) == 0:
+                self.last_message = "ERR: Empty deformation mesh generated"
+                return None
+            
+            # Return mesh data as dictionary
+            mesh_data = {
+                'start_coords': start_coords,      # (N, 2) array of (x, y) start points
+                'magnitudes': magnitudes,          # (N,) array of arrow magnitudes
+                'directions': directions,          # (N, 2) array of (dx, dy) directions (unit vectors)
+                'grid_size': grid_n,              # Grid dimensions for reference
+                'scale_factor': scale             # Scale factor used
+            }
+            
+            self.last_message = f"Deformation mesh captured: {len(start_coords)} arrows"
+            return mesh_data
+            
+        except Exception as e:
+            self.last_message = f"ERR: Failed to capture deformation mesh: {e}"
+            return None
+    
+    def get_shear_mesh(self, scale=20.0, grid_n=15):
+        """
+        Capture shear arrow mesh data with coordinates, magnitudes, and directions.
+        
+        Args:
+            scale (float): Scale factor for arrow vectors (default: 20.0)
+            grid_n (int): Number of arrows per axis (default: 15, creates 15x15 grid = 225 arrows)
+        
+        Returns:
+            dict or None: Dictionary with 'start_coords', 'magnitudes', and 'directions', or None if unavailable
+        """
+        if not self.sensor or not SENSOR_AVAILABLE:
+            self.last_message = "ERR: Sensor not available for shear mesh capture"
+            return None
+        
+        if not NUMPY_AVAILABLE:
+            self.last_message = "ERR: Numpy not available for shear mesh capture"
+            return None
+        
+        try:
+            # Get current shear data
+            shear = self.sensor.getShear()
+            
+            if shear is None:
+                self.last_message = "ERR: No shear data available"
+                return None
+            
+            # Calculate arrow mesh using the same function from main_bota.py
+            start_coords, magnitudes, directions = self._calculate_arrow_mesh(
+                shear, scale=scale, grid_n=grid_n
+            )
+            
+            if len(start_coords) == 0:
+                self.last_message = "ERR: Empty shear mesh generated"
+                return None
+            
+            # Return mesh data as dictionary
+            mesh_data = {
+                'start_coords': start_coords,      # (N, 2) array of (x, y) start points
+                'magnitudes': magnitudes,          # (N,) array of arrow magnitudes  
+                'directions': directions,          # (N, 2) array of (dx, dy) directions (unit vectors)
+                'grid_size': grid_n,              # Grid dimensions for reference
+                'scale_factor': scale             # Scale factor used
+            }
+            
+            self.last_message = f"Shear mesh captured: {len(start_coords)} arrows"
+            return mesh_data
+            
+        except Exception as e:
+            self.last_message = f"ERR: Failed to capture shear mesh: {e}"
+            return None
+    
+    def _calculate_arrow_mesh(self, arrows, scale=1.0, grid_n=15):
+        """
+        Given a 2D vector field (H, W, 2), returns:
+            - start_coords: (N, 2) array of (x, y) start points
+            - magnitudes: (N,) array of arrow magnitudes
+            - directions: (N, 2) array of (dx, dy) directions (unit vectors)
+        The grid is sampled at grid_n x grid_n points.
+        
+        This is adapted from the calculate_arrow_mesh function in main_bota.py
+        """
+        if not NUMPY_AVAILABLE:
+            return [], [], []
+        
+        H, W = arrows.shape[:2]
+        # grid_n is the number of arrows per axis
+        y_idx = np.linspace(0, H-1, grid_n, dtype=int)
+        x_idx = np.linspace(0, W-1, grid_n, dtype=int)
+        grid_y, grid_x = np.meshgrid(y_idx, x_idx, indexing='ij')
+        
+        # Get start coordinates
+        start_coords = np.stack([grid_x, grid_y], axis=-1).reshape(-1, 2)
+        
+        # Get arrow vectors at those points
+        vectors = arrows[grid_y, grid_x] * scale  # shape (grid_n, grid_n, 2)
+        vectors = vectors.reshape(-1, 2)
+        
+        # Magnitude
+        magnitudes = np.linalg.norm(vectors, axis=1)
+        
+        # Directions (unit vectors, avoid division by zero)
+        with np.errstate(divide='ignore', invalid='ignore'):
+            directions = np.where(magnitudes[:, None] > 0, vectors / magnitudes[:, None], 0)
+        
+        return start_coords, magnitudes, directions
+    
+    def capture_snapshot(self, scale=20.0, grid_n=15):
+        """
+        Capture a complete snapshot of all sensor data including depth array and mesh data.
+        
+        Args:
+            scale (float): Scale factor for arrow vectors (default: 20.0)
+            grid_n (int): Number of arrows per axis (default: 15)
+        
+        Returns:
+            dict or None: Complete snapshot data, or None if sensor unavailable
+        """
+        if not self.sensor or not SENSOR_AVAILABLE:
+            self.last_message = "ERR: Sensor not available for snapshot capture"
+            return None
+        
+        try:
+            # Capture all data components
+            depth_array = self.get_instantaneous_depth_array()
+            deformation_mesh = self.get_deformation_mesh(scale=scale, grid_n=grid_n)
+            shear_mesh = self.get_shear_mesh(scale=scale, grid_n=grid_n)
+            
+            # Get current intensity values
+            max_intensity = self.max_depth_intensity
+            baseline_intensity = self.baseline_intensity
+            net_intensity = self.net_intensity
+            
+            # Create complete snapshot
+            snapshot = {
+                'timestamp': time.time(),
+                'depth_array': depth_array,
+                'deformation_mesh': deformation_mesh,
+                'shear_mesh': shear_mesh,
+                'max_intensity': max_intensity,
+                'baseline_intensity': baseline_intensity,
+                'net_intensity': net_intensity,
+                'sensor_fps': self.sensor_fps,
+                'centerline_detected': self.centerline_points is not None,
+                'angle_offset': self.angle_offset,
+                'contact_threshold': self.contact_threshold
+            }
+            
+            self.last_message = f"Complete snapshot captured at {time.strftime('%H:%M:%S')}"
+            return snapshot
+            
+        except Exception as e:
+            self.last_message = f"ERR: Failed to capture complete snapshot: {e}"
+            return None
+
+
+class BotaManager:
+    """Manager for Bota force sensor integration"""
+    BOTA_VENDOR_ID = 0xB07A
+    BOTA_PRODUCT_CODE = 0x00000001
+    SINC_LENGTH = 256
+    
+    def __init__(self, ifname="\\Device\\NPF_{6B61C18B-8290-4FF1-A5C0-3C01D5676AE1}"):
+        self._ifname = ifname
+        self._master = None
+        self._expected_slave_mapping = {}
+        
+        # State variables
+        self.connected = False
+        self.running = False
+        self.time_step = 1.0
+        self.sampling_rate = None
+        self.last_message = "Not initialized"
+        
+        # Force data
+        self.fz_offset = 0.0
+        self.current_fz = 0.0
+        
+        # Recording state
+        self.recording = False
+        self.fz_samples = []
+        self.record_start_time = None
+        self.last_snapshot_time = None  # Track last snapshot time
+        
+        # Latest sensor data
+        self.latest_data = {
+            'status': 0,
+            'warningsErrorsFatals': 0,
+            'Fx': 0.0, 'Fy': 0.0, 'Fz': 0.0,
+            'Mx': 0.0, 'My': 0.0, 'Mz': 0.0,
+            'forceTorqueSaturated': 0,
+            'temperature': 0.0
+        }
+        
+        # Initialize pysoem components if available
+        if BOTA_AVAILABLE:
+            self._master = pysoem.Master()
+            SlaveSet = collections.namedtuple('SlaveSet', 'slave_name product_code config_func')
+            self._expected_slave_mapping = {0: SlaveSet('BFT-MEDS-ECAT-M8', self.BOTA_PRODUCT_CODE, self.bota_sensor_setup)}
+
+    def bota_sensor_setup(self, slave_pos):
+        """Configure the Bota sensor"""
+        if not BOTA_AVAILABLE:
+            return
+        
+        slave = self._master.slaves[slave_pos]
+        slave.sdo_write(0x8010, 1, bytes(ctypes.c_uint8(1)))
+        slave.sdo_write(0x8010, 2, bytes(ctypes.c_uint8(0)))
+        slave.sdo_write(0x8010, 3, bytes(ctypes.c_uint8(1)))
+        slave.sdo_write(0x8006, 2, bytes(ctypes.c_uint8(1)))
+        slave.sdo_write(0x8006, 3, bytes(ctypes.c_uint8(0)))
+        slave.sdo_write(0x8006, 4, bytes(ctypes.c_uint8(0)))
+        slave.sdo_write(0x8006, 1, bytes(ctypes.c_uint16(self.SINC_LENGTH)))
+        try:
+            slave.sdo_write(0x8011, 0, struct.pack('h', 100))
+        except Exception:
+            pass
+        sampling_rate = struct.unpack('h', slave.sdo_read(0x8011, 0))[0]
+        if sampling_rate > 0:
+            self.time_step = 1.0/float(sampling_rate)
+        self.sampling_rate = sampling_rate
+
+    def connect(self):
+        """Initialize and configure the Bota sensor"""
+        if not BOTA_AVAILABLE:
+            self.last_message = "Bota sensor dependencies not available"
+            return False
+        
+        try:
+            self._master.open(self._ifname)
+            if self._master.config_init() > 0:
+                for i, slave in enumerate(self._master.slaves):
+                    if slave.man != self.BOTA_VENDOR_ID or slave.id != self._expected_slave_mapping[i].product_code:
+                        self.last_message = f"Unexpected slave configuration"
+                        return False
+                    slave.config_func = self._expected_slave_mapping[i].config_func
+                
+                self._master.config_map()
+                if self._master.state_check(pysoem.SAFEOP_STATE, 50000) != pysoem.SAFEOP_STATE:
+                    self.last_message = "Failed to reach SAFEOP state"
+                    return False
+                
+                self._master.state = pysoem.OP_STATE
+                self._master.write_state()
+                self._master.state_check(pysoem.OP_STATE, 50000)
+                if self._master.state != pysoem.OP_STATE:
+                    self.last_message = "Failed to reach OP state"
+                    return False
+                
+                self.connected = True
+                self.running = True
+                self.last_message = "Connected and operational"
+                print("✓ Bota force sensor connected")
+                return True
+            else:
+                self.last_message = "No slaves found"
+                return False
+        except Exception as e:
+            self.last_message = f"Connection error: {str(e)}"
+            return False
+
+    def disconnect(self):
+        """Disconnect and clean up the Bota sensor"""
+        self.running = False
+        if self.connected and BOTA_AVAILABLE:
+            try:
+                self._master.state = pysoem.INIT_STATE
+                self._master.write_state()
+                self._master.close()
+                self.connected = False
+                self.last_message = "Disconnected"
+                print("✓ Bota force sensor disconnected")
+            except Exception as e:
+                self.last_message = f"Cleanup error: {str(e)}"
+
+    def zero_fz(self):
+        """Zero the Fz reading (calibration)"""
+        if self.connected:
+            self.fz_offset = self.latest_data['Fz'] + self.fz_offset  # Account for current offset
+            self.last_message = f"Fz zeroed at {self.fz_offset:.4f}N"
+            print(f"✓ Bota Fz zeroed at {self.fz_offset:.4f}N")
+            return True
+        return False
+
+    def start_recording(self, duration_seconds=60):
+        """Start Fz recording for specified duration"""
+        if self.connected and not self.recording:
+            self.recording = True
+            self.fz_samples = []  # Will store (time, abs_fz) tuples
+            self.record_start_time = time.time()
+            self.last_snapshot_time = 0  # Initialize snapshot timer
+            self.last_message = f"Recording started ({duration_seconds}s)"
+            print(f"🔴 Started {duration_seconds}-second Fz recording...")
+            return True
+        return False
+    
+    def stop_recording(self):
+        """Stop and discard current recording session"""
+        if self.recording:
+            self.recording = False
+            sample_count = len(self.fz_samples)
+            snapshot_count = self.last_snapshot_time if self.last_snapshot_time else 0
+            self.fz_samples = []  # Clear collected data
+            self.record_start_time = None
+            self.last_snapshot_time = None  # Reset snapshot timer
+            self.last_message = "Recording stopped and discarded"
+            print(f"⏹️ Recording stopped and discarded ({sample_count} samples)")
+            return True
+        return False
+
+    def get_recording_data(self):
+        """Get current recording data (non-destructive)"""
+        if self.recording or self.fz_samples:
+            return {
+                'fz_samples': self.fz_samples.copy(),
+                'record_start_time': self.record_start_time,
+                'is_recording': self.recording,
+                'sample_count': len(self.fz_samples),
+                'elapsed_time': time.time() - self.record_start_time if self.record_start_time else 0
+            }
+        return None
+
+    def start_reader_thread(self, system_state):
+        """Start the sensor reading thread"""
+        if not self.connected or not BOTA_AVAILABLE:
+            return None
+        
+        def reader_thread():
+            try:
+                while self.running and system_state.running:
+                    self._master.send_processdata()
+                    self._master.receive_processdata(2000)
+                    
+                    # Parse sensor data
+                    sensor_input_as_bytes = self._master.slaves[0].input
+                    status = struct.unpack_from('B', sensor_input_as_bytes, 0)[0]
+                    warningsErrorsFatals = struct.unpack_from('I', sensor_input_as_bytes, 1)[0]
+                    Fx = struct.unpack_from('f', sensor_input_as_bytes, 5)[0]
+                    Fy = struct.unpack_from('f', sensor_input_as_bytes, 9)[0]
+                    Fz = struct.unpack_from('f', sensor_input_as_bytes, 13)[0]
+                    Mx = struct.unpack_from('f', sensor_input_as_bytes, 17)[0]
+                    My = struct.unpack_from('f', sensor_input_as_bytes, 21)[0]
+                    Mz = struct.unpack_from('f', sensor_input_as_bytes, 25)[0]
+                    forceTorqueSaturated = struct.unpack_from('H', sensor_input_as_bytes, 29)[0]
+                    temperature = struct.unpack_from('f', sensor_input_as_bytes, 57)[0]
+                    
+                    # Apply Fz offset and store current value
+                    self.current_fz = Fz - self.fz_offset
+                    
+                    # Update latest data
+                    self.latest_data = {
+                        'status': status,
+                        'warningsErrorsFatals': warningsErrorsFatals,
+                        'Fx': Fx, 'Fy': Fy, 'Fz': self.current_fz,
+                        'Mx': Mx, 'My': My, 'Mz': Mz,
+                        'forceTorqueSaturated': forceTorqueSaturated,
+                        'temperature': temperature
+                    }
+                    
+                    # Handle recording if active
+                    if self.recording:
+                        current_time = time.time()
+                        elapsed_time = current_time - self.record_start_time
+                        self.fz_samples.append((elapsed_time, abs(self.current_fz)))
+                    
+                    time.sleep(self.time_step)
+                    
+            except Exception as e:
+                self.last_message = f"Reader error: {str(e)}"
+                self.connected = False
+            finally:
+                if BOTA_AVAILABLE:
+                    try:
+                        self._master.state = pysoem.INIT_STATE
+                        self._master.write_state()
+                        self._master.close()
+                    except:
+                        pass
+        
+        thread = threading.Thread(target=reader_thread, name="BotaSensorThread", daemon=True)
+        thread.start()
+        return thread
+
+    def get_status(self):
+        """Get current sensor status"""
+        return {
+            'connected': self.connected,
+            'recording': self.recording,
+            'fz_offset': self.fz_offset,
+            'current_fz': self.current_fz,
+            'latest_data': self.latest_data.copy(),
+            'last_message': self.last_message,
+            'sampling_rate': self.sampling_rate,
+            'sample_count': len(self.fz_samples) if self.fz_samples else 0,
+            'elapsed_time': time.time() - self.record_start_time if self.record_start_time else 0
+        }
 
 
 class SensorManager:
-    """Main sensor manager that coordinates visuotactile sensor"""
+    """Main sensor manager that coordinates all sensors"""
     
     def __init__(self):
         self.visuotactile = DaimonManager()
+        self.bota = BotaManager()
         self.available = {
             'visuotactile': SENSOR_AVAILABLE,
+            'bota': BOTA_AVAILABLE,
         }
     
     def initialize(self):
@@ -569,15 +1108,20 @@ class SensorManager:
                 else:
                     print("⚠ Baseline calibration failed")
         
+        # Initialize Bota force sensor
+        if self.available['bota']:
+            self.available['bota'] = self.bota.connect()
+        
         return self.available
     
     def cleanup(self):
         """Clean up sensor connections"""
         print("Cleaning up sensor connections...")
         self.visuotactile.disconnect()
+        self.bota.disconnect()
     
     def get_status(self):
-        """Get status of visuotactile sensor"""
+        """Get status of all sensors"""
         return {
             'visuotactile': {
                 'connected': self.visuotactile.connected,
@@ -589,55 +1133,10 @@ class SensorManager:
                 'centerline_detected': self.visuotactile.centerline_points is not None,
                 'angle_offset': self.visuotactile.angle_offset,
                 'contact_threshold': self.visuotactile.contact_threshold
-            }
+            },
+            'bota': self.bota.get_status()
         }
     
     def check_gripping_condition(self, net_intensity):
         """Check if the net intensity exceeds the threshold during gripping"""
         return net_intensity > ADAPTIVE_GRIPPING_CONFIG["threshold"]
-    
-    def toggle_manual_tilt_mode(self):
-        """Toggle between manual tilt mode and automatic centerline calculation"""
-        MANUAL_TILT_CONFIG["enabled"] = not MANUAL_TILT_CONFIG["enabled"]
-        mode = "Manual" if MANUAL_TILT_CONFIG["enabled"] else "Automatic (Centerline)"
-        current_value = MANUAL_TILT_CONFIG["current_value"]
-        print(f"Tilt mode: {mode} | Current value: {current_value}°")
-        return MANUAL_TILT_CONFIG["enabled"]
-    
-    def increment_manual_tilt(self):
-        """Increment manual tilt to next valid value"""
-        if not MANUAL_TILT_CONFIG["enabled"]:
-            return MANUAL_TILT_CONFIG["current_value"]
-        
-        valid_values = MANUAL_TILT_CONFIG["valid_values"]
-        current_value = MANUAL_TILT_CONFIG["current_value"]
-        
-        try:
-            current_index = valid_values.index(current_value)
-            next_index = (current_index + 1) % len(valid_values)
-            MANUAL_TILT_CONFIG["current_value"] = valid_values[next_index]
-        except ValueError:
-            # If current value is not in valid values, reset to first
-            MANUAL_TILT_CONFIG["current_value"] = valid_values[0]
-        
-        print(f"Manual tilt set to: {MANUAL_TILT_CONFIG['current_value']}°")
-        return MANUAL_TILT_CONFIG["current_value"]
-    
-    def decrement_manual_tilt(self):
-        """Decrement manual tilt to previous valid value"""
-        if not MANUAL_TILT_CONFIG["enabled"]:
-            return MANUAL_TILT_CONFIG["current_value"]
-        
-        valid_values = MANUAL_TILT_CONFIG["valid_values"]
-        current_value = MANUAL_TILT_CONFIG["current_value"]
-        
-        try:
-            current_index = valid_values.index(current_value)
-            prev_index = (current_index - 1) % len(valid_values)
-            MANUAL_TILT_CONFIG["current_value"] = valid_values[prev_index]
-        except ValueError:
-            # If current value is not in valid values, reset to last
-            MANUAL_TILT_CONFIG["current_value"] = valid_values[-1]
-        
-        print(f"Manual tilt set to: {MANUAL_TILT_CONFIG['current_value']}°")
-        return MANUAL_TILT_CONFIG["current_value"]

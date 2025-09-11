@@ -131,6 +131,42 @@ class DaimonManager:
             self.last_message = f"ERR: Failed to get depth intensity: {e}"
             return 0.0
     
+    def get_depth_intensity_integral(self):
+        """
+        Calculate the depth intensity integral by summing all pixel intensities in the depth image.
+        This provides a measure of the total contact area and intensity across the entire sensor surface.
+        
+        Returns:
+            float: Sum of all depth pixel intensities, or 0.0 if unavailable
+        """
+        if not self.sensor or not SENSOR_AVAILABLE:
+            return 0.0
+        
+        if not NUMPY_AVAILABLE:
+            self.last_message = "Numpy not available for depth integral processing"
+            return 0.0
+        
+        try:
+            depth = self.sensor.getDepth()
+            
+            if depth is not None and depth.size > 0:
+                # Calculate the integral (sum of all pixel intensities)
+                depth_integral = float(np.sum(depth))
+                
+                # Also calculate net integral (removing baseline contribution)
+                baseline_contribution = self.baseline_intensity * depth.size
+                net_depth_integral = depth_integral - baseline_contribution
+                
+                self.last_message = f"Depth integral: {depth_integral:.3f}, Net integral: {net_depth_integral:.3f}"
+                return depth_integral
+            else:
+                self.last_message = "No depth data available for integral calculation"
+                return 0.0
+                
+        except Exception as e:
+            self.last_message = f"ERR: Failed to calculate depth integral: {e}"
+            return 0.0
+    
     def calibrate_baseline_intensity(self, samples=10):
         """Calibrate the baseline intensity when gripper is fully open"""
         if not self.sensor or not SENSOR_AVAILABLE:
@@ -754,6 +790,113 @@ class DaimonManager:
             
         except Exception as e:
             self.last_message = f"ERR: Failed to capture shear mesh: {e}"
+            return None
+    
+    def get_deformation_integral(self, scale=20.0, grid_n=15):
+        """
+        Calculate the deformation integral by summing the magnitudes of all arrows in the deformation mesh.
+        This provides a single scalar value representing the overall deformation intensity.
+        
+        Args:
+            scale (float): Scale factor for arrow vectors (default: 20.0)
+            grid_n (int): Number of arrows per axis (default: 15, creates 15x15 grid = 225 arrows)
+        
+        Returns:
+            float or None: Sum of all deformation arrow magnitudes, or None if unavailable
+        """
+        if not self.sensor or not SENSOR_AVAILABLE:
+            self.last_message = "ERR: Sensor not available for deformation integral calculation"
+            return None
+        
+        if not NUMPY_AVAILABLE:
+            self.last_message = "ERR: Numpy not available for deformation integral calculation"
+            return None
+        
+        try:
+            # Get current deformation data
+            deformation = self.sensor.getDeformation2D()
+            
+            if deformation is None:
+                self.last_message = "ERR: No deformation data available for integral calculation"
+                return None
+            
+            # Calculate arrow mesh
+            start_coords, magnitudes, directions = self._calculate_arrow_mesh(
+                deformation, scale=scale, grid_n=grid_n
+            )
+            
+            if len(magnitudes) == 0:
+                self.last_message = "ERR: Empty deformation mesh for integral calculation"
+                return None
+            
+            # Calculate the integral (sum of all magnitudes)
+            deformation_integral = float(np.sum(magnitudes))
+            
+            self.last_message = f"Deformation integral calculated: {deformation_integral:.6f} from {len(magnitudes)} arrows"
+            return deformation_integral
+            
+        except Exception as e:
+            self.last_message = f"ERR: Failed to calculate deformation integral: {e}"
+            return None
+    
+    def get_resultant_shear_vector(self, scale=20.0, grid_n=15):
+        """
+        Calculate the resultant shear vector by summing all shear arrow vectors in the mesh.
+        This provides the x and y components of the net shear force across the sensor surface.
+        
+        Args:
+            scale (float): Scale factor for arrow vectors (default: 20.0)
+            grid_n (int): Number of arrows per axis (default: 15, creates 15x15 grid = 225 arrows)
+        
+        Returns:
+            tuple or None: (shear_x, shear_y) components of resultant shear vector, or None if unavailable
+        """
+        if not self.sensor or not SENSOR_AVAILABLE:
+            self.last_message = "ERR: Sensor not available for resultant shear vector calculation"
+            return None
+        
+        if not NUMPY_AVAILABLE:
+            self.last_message = "ERR: Numpy not available for resultant shear vector calculation"
+            return None
+        
+        try:
+            # Get current shear data
+            shear = self.sensor.getShear()
+            
+            if shear is None:
+                self.last_message = "ERR: No shear data available for resultant vector calculation"
+                return None
+            
+            # Calculate arrow mesh
+            start_coords, magnitudes, directions = self._calculate_arrow_mesh(
+                shear, scale=scale, grid_n=grid_n
+            )
+            
+            if len(magnitudes) == 0 or len(directions) == 0:
+                self.last_message = "ERR: Empty shear mesh for resultant vector calculation"
+                return None
+            
+            # Calculate resultant vector by summing all vector components
+            # Ensure we have numpy arrays for calculations
+            magnitudes_array = np.array(magnitudes)
+            directions_array = np.array(directions)
+            
+            # Each direction is a unit vector, so multiply by magnitude to get actual vector
+            vectors = directions_array * magnitudes_array.reshape(-1, 1)  # Shape: (N, 2)
+            
+            # Sum all vectors to get resultant
+            resultant_vector = np.sum(vectors, axis=0)
+            shear_x = float(resultant_vector[0])
+            shear_y = float(resultant_vector[1])
+            
+            # Calculate resultant magnitude for logging
+            resultant_magnitude = float(np.linalg.norm(resultant_vector))
+            
+            self.last_message = f"Resultant shear vector calculated: ({shear_x:.6f}, {shear_y:.6f}), magnitude: {resultant_magnitude:.6f} from {len(magnitudes)} arrows"
+            return (shear_x, shear_y)
+            
+        except Exception as e:
+            self.last_message = f"ERR: Failed to calculate resultant shear vector: {e}"
             return None
     
     def _calculate_arrow_mesh(self, arrows, scale=1.0, grid_n=15):

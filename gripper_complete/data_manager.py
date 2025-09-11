@@ -21,36 +21,6 @@ except ImportError:
     print("Warning: numpy not available for mesh calculations in data_manager")
 
 
-def calculate_arrow_mesh(arrows, scale=1.0, grid_n=15):
-    """
-    Given a 2D vector field (H, W, 2), returns:
-        - start_coords: (N, 2) array of (x, y) start points
-        - magnitudes: (N,) array of arrow magnitudes
-        - directions: (N, 2) array of (dx, dy) directions (unit vectors)
-    The grid is sampled at grid_n x grid_n points.
-    """
-    if not NUMPY_AVAILABLE:
-        print("Warning: numpy not available for mesh calculation")
-        return [], [], []
-    
-    H, W = arrows.shape[:2]
-    # grid_n is the number of arrows per axis
-    y_idx = np.linspace(0, H-1, grid_n, dtype=int)
-    x_idx = np.linspace(0, W-1, grid_n, dtype=int)
-    grid_y, grid_x = np.meshgrid(y_idx, x_idx, indexing='ij')
-    # Get start coordinates
-    start_coords = np.stack([grid_x, grid_y], axis=-1).reshape(-1, 2)
-    # Get arrow vectors at those points
-    vectors = arrows[grid_y, grid_x] * scale  # shape (grid_n, grid_n, 2)
-    vectors = vectors.reshape(-1, 2)
-    # Magnitude
-    magnitudes = np.linalg.norm(vectors, axis=1)
-    # Directions (unit vectors, avoid division by zero)
-    with np.errstate(divide='ignore', invalid='ignore'):
-        directions = np.where(magnitudes[:, None] > 0, vectors / magnitudes[:, None], 0)
-    return start_coords, magnitudes, directions
-
-
 class DataManager:
     """Manages data recording sessions and JSON snapshot generation"""
     
@@ -314,11 +284,41 @@ class DataManager:
             # Get centerline angle offset (correct attribute name)
             angle_offset = getattr(sensor, 'angle_offset', 0.0)
             
+            # Get new sensor measurements
+            # 1. Deformation integral - sum of all deformation arrow magnitudes
+            deformation_integral = None
+            try:
+                deformation_integral = sensor.get_deformation_integral(scale=20.0, grid_n=15)
+            except Exception as e:
+                print(f"Warning: Could not get deformation integral: {e}")
+            
+            # 2. Resultant shear vector - x and y components of net shear force
+            shear_vector_x = None
+            shear_vector_y = None
+            try:
+                shear_vector = sensor.get_resultant_shear_vector(scale=20.0, grid_n=15)
+                if shear_vector is not None:
+                    shear_vector_x, shear_vector_y = shear_vector
+            except Exception as e:
+                print(f"Warning: Could not get resultant shear vector: {e}")
+            
+            # 3. Depth intensity integral - sum of all depth pixel intensities
+            depth_integral = None
+            try:
+                depth_integral = sensor.get_depth_intensity_integral()
+            except Exception as e:
+                print(f"Warning: Could not get depth intensity integral: {e}")
+            
             return {
                 "deformation_mesh": deformation_mesh,
                 "shear_mesh": shear_mesh,
                 "max_intensity": round(max_intensity, 6),
-                "centerline_angle_offset": round(angle_offset, 3) if angle_offset is not None else None
+                "centerline_angle_offset": round(angle_offset, 3) if angle_offset is not None else None,
+                # New scalar measurements
+                "deformation_integral": round(deformation_integral, 6) if deformation_integral is not None else None,
+                "shear_vector_x": round(shear_vector_x, 6) if shear_vector_x is not None else None,
+                "shear_vector_y": round(shear_vector_y, 6) if shear_vector_y is not None else None,
+                "depth_intensity_integral": round(depth_integral, 6) if depth_integral is not None else None
             }
             
         except Exception as e:

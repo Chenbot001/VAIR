@@ -1,11 +1,11 @@
-2025-09-11 04:11:44,509 - INFO - System is Windows
-2025-09-11 04:12:15,183 - INFO - Raw Measurement FPS is: 47.96
-2025-09-11 04:12:15,184 - INFO - Sensor reset!!!!!!!!!!!!!!!!!!
-2025-09-11 04:12:15,185 - INFO - SDK Version: 0.1.0
-2025-09-11 04:12:16,725 - DEBUG - io map size: 78
-2025-09-11 04:15:36,049 - DEBUG - matplotlib data path: C:\Users\ssr\miniconda3\envs\ssr\lib\site-packages\matplotlib\mpl-data
-2025-09-11 04:15:36,056 - DEBUG - CONFIGDIR=C:\Users\ssr\.matplotlib
-2025-09-11 04:15:36,061 - DEBUG - interactive is False
-2025-09-11 04:15:36,061 - DEBUG - platform is win32
-2025-09-11 04:15:36,158 - DEBUG - CACHEDIR=C:\Users\ssr\.matplotlib
-2025-09-11 04:15:36,162 - DEBUG - Using fontManager instance from C:\Users\ssr\.matplotlib\fontlist-v390.json
+2025-09-11 21:41:12,904 - INFO - System is Windows
+2025-09-11 21:41:43,713 - INFO - Raw Measurement FPS is: 47.81
+2025-09-11 21:41:43,714 - INFO - Sensor reset!!!!!!!!!!!!!!!!!!
+2025-09-11 21:41:43,716 - INFO - SDK Version: 0.1.0
+2025-09-11 21:41:45,263 - DEBUG - io map size: 78
+2025-09-11 21:44:34,533 - DEBUG - matplotlib data path: C:\Users\ssr\miniconda3\envs\ssr\lib\site-packages\matplotlib\mpl-data
+2025-09-11 21:44:34,545 - DEBUG - CONFIGDIR=C:\Users\ssr\.matplotlib
+2025-09-11 21:44:34,549 - DEBUG - interactive is False
+2025-09-11 21:44:34,549 - DEBUG - platform is win32
+2025-09-11 21:44:34,666 - DEBUG - CACHEDIR=C:\Users\ssr\.matplotlib
+2025-09-11 21:44:34,670 - DEBUG - Using fontManager instance from C:\Users\ssr\.matplotlib\fontlist-v390.json

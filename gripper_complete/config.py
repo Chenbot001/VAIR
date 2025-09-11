@@ -71,11 +71,11 @@ CENTERLINE_CONFIG = {
     "min_contour_area": 5,   # Minimum contour area for centerline detection
 }
 
-
-# Acupuncture experiment poses
-ACU_POSES = {
-    "s_u": [0.348, -0.445, 0.270, 0.723, -1.774, 1.817],
-    "s_d": [0.348, -0.445, 0.216, 0.723, -1.774, 1.817],
-    "l_u": [0.418, -0.445, 0.270, 0.723, -1.774, 1.817],
-    "l_d": [0.418, -0.445, 0.216, 0.723, -1.774, 1.817],
+# Data recording configuration
+RECORDING_CONFIG = {
+    "snapshots_dir": os.path.join(os.path.dirname(__file__), "..", "data"),
+    "default_session_name": "acupuncture",  # Base name for auto-generated session names
+    "snapshot_interval": 0.1,  # Time between snapshots in seconds (10 Hz)
+    "use_timestamp_session_name": True,  # If True, append timestamp to session name
+    "create_session_subdirectories": True,  # If True, create subdirectory for each session
 }

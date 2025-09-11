@@ -492,21 +492,12 @@ class URRobotManager:
             self.rtde_r = rtde_receive.RTDEReceiveInterface(self.robot_ip)
             self.rtde_c = rtde_control.RTDEControlInterface(self.robot_ip)
             
-            # Get current pose for dynamic initialization
-            current_pose = self.rtde_r.getActualTCPPose()
+            # Get current pose for later use
+            self.current_pose = self.rtde_r.getActualTCPPose()
             
-            # Create dynamic initial pose by adding 0.1 to Z coordinate
-            # This provides visible feedback while preventing abrupt motion
-            dynamic_init_pose = current_pose.copy()
-            dynamic_init_pose[2] += 0.03  # Add 0.03m (3cm) to Z coordinate
-
-            # Move to dynamic initial pose
-            self.rtde_c.servoL(dynamic_init_pose, 0.1, 0.08, self.time_duration, self.lookahead_time, self.gain)
-            
-            self.current_pose = dynamic_init_pose.copy()
             self.connected = True
             self.last_message = f"Connected"
-            print(f"✓ UR robot connected at {self.robot_ip} - initialization complete")
+            print(f"✓ UR robot connected at {self.robot_ip}")
             return True
             
         except Exception as e:
@@ -520,6 +511,35 @@ class URRobotManager:
         self.rtde_r = None
         self.rtde_c = None
         print("✓ UR robot disconnected")
+    
+    def perform_ready_signal(self):
+        """
+        Perform the dynamic initialization movement to signal system is ready.
+        Moves the robot arm 3cm upward to provide visual feedback that the system is operational.
+        """
+        if not self.connected or not self.rtde_c:
+            return False
+        
+        try:
+            # Get current pose
+            current_pose = self.rtde_r.getActualTCPPose()
+            
+            # Create dynamic ready pose by adding 3cm to Z coordinate
+            ready_pose = current_pose.copy()
+            ready_pose[2] += 0.03  # Add 0.03m (3cm) to Z coordinate
+
+            # Move to ready pose to signal system is ready
+            self.rtde_c.servoL(ready_pose, 0.1, 0.08, self.time_duration, self.lookahead_time, self.gain)
+            
+            self.current_pose = ready_pose.copy()
+            self.last_message = f"Ready signal complete - arm moved up 3cm"
+            print(f"✓ UR robot ready signal complete - arm moved to ready position")
+            return True
+            
+        except Exception as e:
+            self.last_message = f"ERR: Ready signal failed: {e}"
+            print(f"❌ UR robot ready signal failed: {e}")
+            return False
     
     def move_step(self, direction, step_size=None):
         """Move robot arm one step in the specified linear direction"""

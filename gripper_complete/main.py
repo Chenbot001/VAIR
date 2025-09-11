@@ -8,176 +8,13 @@ import threading
 import signal
 import sys
 import os
-import json
-import csv
 
 from pynput import keyboard
 
-from config import CONFIG, DISPLAY_CONFIG, ADAPTIVE_GRIPPING_CONFIG, ACU_POSES
+from config import CONFIG, DISPLAY_CONFIG, ADAPTIVE_GRIPPING_CONFIG, RECORDING_CONFIG
 from hardware_manager import HardwareManager
 from sensor_manager import SensorManager
-
-
-class AcupunctureRecorder:
-    """Manages recording during acupuncture experiment sessions"""
-    
-    def __init__(self, system_state):
-        self.system_state = system_state
-        self.recording = False
-        self.session_start_time = None
-        self.session_name = ""
-        self.current_operation = "wait"
-        self.operation_start_time = None
-        self.fz_samples = []  # (timestamp, elapsed_time, fz_value, operation)
-        self.last_snapshot_time = 0
-        
-        # Create data directories
-        self.ensure_directories()
-    
-    def ensure_directories(self):
-        """Create necessary data directories"""
-        base_dir = os.path.join(os.path.dirname(__file__), "..", "data")
-        acupuncture_dir = os.path.join(base_dir, "acupuncture")
-        
-        try:
-            os.makedirs(base_dir, exist_ok=True)
-            os.makedirs(acupuncture_dir, exist_ok=True)
-        except Exception as e:
-            print(f"❌ Error creating data directories: {e}")
-    
-    def start_session(self, session_name):
-        """Start a new recording session"""
-        if self.recording:
-            self.stop_session()
-        
-        # Zero the Bota sensor first
-        if self.system_state.sensors.bota.connected:
-            self.system_state.sensors.bota.zero_fz()
-            print(f"🔄 Zeroed Bota sensor for session: {session_name}")
-        
-        self.recording = True
-        self.session_start_time = time.time()
-        self.session_name = session_name
-        self.current_operation = "wait"
-        self.operation_start_time = self.session_start_time
-        self.fz_samples = []
-        self.last_snapshot_time = 0
-        
-        print(f"🔴 Started recording session: {session_name}")
-    
-    def stop_session(self):
-        """Stop current recording session and save data"""
-        if not self.recording:
-            return
-        
-        print(f"⏹️ Stopping recording session: {self.session_name}")
-        
-        # Save force data to CSV
-        self.save_force_csv()
-        
-        # Reset state
-        self.recording = False
-        self.session_start_time = None
-        self.session_name = ""
-        self.current_operation = "wait"
-        self.operation_start_time = None
-        self.fz_samples = []
-        self.last_snapshot_time = 0
-    
-    def set_operation(self, operation):
-        """Set current operation and reset operation timer"""
-        self.current_operation = operation
-        self.operation_start_time = time.time()
-        print(f"   📝 Operation: {operation}")
-    
-    def update_recording(self):
-        """Update recording with current sensor data (call this frequently during recording)"""
-        if not self.recording or not self.system_state.sensors.bota.connected:
-            return
-        
-        current_time = time.time()
-        elapsed_session_time = current_time - self.session_start_time
-        
-        # Record Fz sample with operation
-        fz_value = self.system_state.sensors.bota.current_fz
-        self.fz_samples.append((current_time, elapsed_session_time, fz_value, self.current_operation))
-        
-        # Check if it's time for a snapshot (every 0.5 seconds)
-        if elapsed_session_time - self.last_snapshot_time >= 0.5:
-            self.take_snapshot(current_time, elapsed_session_time)
-            self.last_snapshot_time = elapsed_session_time
-    
-    def take_snapshot(self, current_time, elapsed_session_time):
-        """Take a sensor snapshot and save to JSON"""
-        if not self.system_state.sensors.visuotactile.connected:
-            return
-        
-        try:
-            # Get snapshot from visuotactile sensor
-            snapshot_data = self.system_state.sensors.visuotactile.capture_snapshot()
-            
-            if snapshot_data:
-                # Calculate operation elapsed time
-                operation_elapsed = current_time - self.operation_start_time if self.operation_start_time else 0
-                
-                # Add acupuncture-specific data
-                enhanced_snapshot = snapshot_data.copy()
-                enhanced_snapshot.update({
-                    'session_elapsed_time': elapsed_session_time,
-                    'operation': self.current_operation,
-                    'operation_elapsed_time': operation_elapsed,
-                    'bota_fz': self.system_state.sensors.bota.current_fz if self.system_state.sensors.bota.connected else 0.0
-                })
-                
-                # Save to JSON file
-                self.save_snapshot_json(enhanced_snapshot, current_time)
-                
-        except Exception as e:
-            print(f"❌ Error taking snapshot: {e}")
-    
-    def save_snapshot_json(self, snapshot_data, timestamp):
-        """Save snapshot data to JSON file"""
-        try:
-            acupuncture_dir = os.path.join(os.path.dirname(__file__), "..", "data", "acupuncture")
-            
-            # Create filename with operation and timestamp
-            timestamp_str = time.strftime("%Y%m%d_%H%M%S", time.localtime(timestamp))
-            milliseconds = int((timestamp % 1) * 1000)
-            filename = f"snapshot_{self.current_operation}_{timestamp_str}_{milliseconds:03d}.json"
-            
-            file_path = os.path.join(acupuncture_dir, filename)
-            
-            with open(file_path, 'w', encoding='utf-8') as f:
-                json.dump(snapshot_data, f, indent=2, default=str)
-                
-        except Exception as e:
-            print(f"❌ Error saving snapshot JSON: {e}")
-    
-    def save_force_csv(self):
-        """Save force data to CSV file"""
-        if not self.fz_samples:
-            return
-        
-        try:
-            data_dir = os.path.join(os.path.dirname(__file__), "..", "data")
-            
-            # Create filename with timestamp only
-            timestamp_str = time.strftime("%Y%m%d_%H%M%S", time.localtime(self.session_start_time))
-            filename = f"acu_force_{timestamp_str}.csv"
-            
-            file_path = os.path.join(data_dir, filename)
-            
-            with open(file_path, 'w', newline='', encoding='utf-8') as csvfile:
-                writer = csv.writer(csvfile)
-                writer.writerow(['timestamp', 'elapsed_time_s', 'fz_value_N', 'operation'])
-                
-                for timestamp, elapsed_time, fz_value, operation in self.fz_samples:
-                    writer.writerow([timestamp, f"{elapsed_time:.3f}", f"{fz_value:.6f}", operation])
-                    
-            print(f"✅ Force data saved: {file_path} ({len(self.fz_samples)} samples)")
-            
-        except Exception as e:
-            print(f"❌ Error saving force CSV: {e}")
+from data_manager import DataManager
 
 
 class SystemState:
@@ -193,11 +30,11 @@ class SystemState:
         self.hardware = HardwareManager()
         self.sensors = SensorManager()
         
+        # Data recording manager
+        self.data_manager = DataManager()
+        
         # Thread references
         self.threads = []
-        
-        # Acupuncture recorder
-        self.acupuncture_recorder = None
     
     def update_diameter(self, diameter_mm):
         """Update diameter (control mode is always step-based)"""
@@ -239,8 +76,10 @@ class GripperControlSystem:
             self.state.hardware.gripper.move_to_percentage(CONFIG["gripper_default_open_percent"])
             time.sleep(2)
         
-        # Initialize acupuncture recorder
-        self.state.acupuncture_recorder = AcupunctureRecorder(self.state)
+        # Perform UR robot ready signal (move arm up 3cm to indicate system is ready)
+        if self.state.hardware.ur_robot.connected:
+            print("Signaling system ready with UR robot arm movement...")
+            self.state.hardware.ur_robot.perform_ready_signal()
         
         print("\n" + "="*60)
         print("           SYSTEM READY - STARTING CONTROL LOOP")
@@ -295,6 +134,11 @@ class GripperControlSystem:
         self.state.hardware.cleanup()
         self.state.sensors.cleanup()
         
+        # Clean up data manager
+        if self.state.data_manager.is_recording():
+            print("Stopping active recording session...")
+            self.state.data_manager.stop_recording_session()
+        
         # Force stop all background threads
         print("Stopping background threads...")
         active_threads = threading.enumerate()
@@ -331,169 +175,6 @@ class GripperControlSystem:
         
         # Force exit after cleanup
         os._exit(0)
-    
-    def run_acupuncture_sequence(self):
-        """Run the acupuncture experiment sequence in a separate thread"""
-        if not self.state.hardware.ur_robot.connected:
-            print("❌ Cannot run acupuncture sequence: UR Robot not connected")
-            return
-        
-        def sequence_thread():
-            try:
-                print("🎯 Starting Acupuncture Experiment Sequence...")
-                print("   This will take approximately 20 seconds to complete")
-                
-                # Step 1: Move to s_u
-                print("   Step 1/6: Moving to s_u (shallow upper)")
-                self.state.hardware.ur_robot.move_to_pose(ACU_POSES["s_u"])
-                time.sleep(1)
-                
-                # Step 2: Move to s_d
-                print("   Step 2/6: Moving to s_d (shallow deeper)")
-                self.state.hardware.ur_robot.move_to_pose(ACU_POSES["s_d"])
-                time.sleep(1)
-                
-                # Manipulation sequence between steps 2 and 3 (7-step sequence)
-                print("   → Closing gripper")
-                self.state.hardware.gripper.move_to_percentage(100)
-                time.sleep(8)
-                
-                # START RECORDING SESSION 1 (shallow object)
-                recorder = self.state.acupuncture_recorder
-                recorder.start_session("left")
-                
-                # Get current pose and lift object
-                current_pose = self.state.hardware.ur_robot.current_pose.copy()
-                lift_pose = current_pose.copy()
-                lift_pose[2] += 0.03  # Add 0.03m to Z coordinate
-                
-                print("   → Lifting object (+0.03m)")
-                recorder.set_operation("lift")
-                self.state.hardware.ur_robot.move_to_pose(lift_pose)
-                self._recording_sleep(1, recorder)
-                
-                print("   → Lowering object back to position (-0.03m)")
-                recorder.set_operation("lower")
-                self.state.hardware.ur_robot.move_to_pose(current_pose)
-                self._recording_sleep(2, recorder)
-                
-                print("   → Rotating 20 steps CW")
-                recorder.set_operation("cw")
-                self.state.hardware.stepper.send_step_move_command(20, 'cw')
-                self._recording_sleep(1, recorder)
-                
-                print("   → Rotating 40 steps CCW")
-                recorder.set_operation("ccw")
-                self.state.hardware.stepper.send_step_move_command(40, 'ccw')
-                self._recording_sleep(1, recorder)
-                
-                print("   → Rotating 20 steps CW (back to original)")
-                recorder.set_operation("cw")
-                self.state.hardware.stepper.send_step_move_command(20, 'cw')
-                self._recording_sleep(1, recorder)
-                
-                # STOP RECORDING SESSION 1
-                recorder.stop_session()
-                
-                print("   → Opening gripper")
-                # Ensure adaptive gripping is stopped before opening
-                if self.state.hardware.gripper.is_gripping:
-                    print("   → Stopping adaptive gripping...")
-                    self.state.hardware.gripper.stop_adaptive_gripping()
-                    time.sleep(0.2)
-                # Use opening velocity for faster gripper opening
-                self.state.hardware.gripper.move_to_percentage(CONFIG["gripper_default_open_percent"], 
-                                                             ADAPTIVE_GRIPPING_CONFIG["opening_velocity"])
-                time.sleep(3)
-                
-                # Step 3: Move back to s_u
-                print("   Step 3/6: Moving back to s_u (shallow upper)")
-                self.state.hardware.ur_robot.move_to_pose(ACU_POSES["s_u"])
-                time.sleep(1)
-                
-                # Step 4: Move to l_u
-                print("   Step 4/6: Moving to l_u (lateral upper)")
-                self.state.hardware.ur_robot.move_to_pose(ACU_POSES["l_u"])
-                time.sleep(1)
-                
-                # Step 5: Move to l_d
-                print("   Step 5/6: Moving to l_d (lateral deeper)")
-                self.state.hardware.ur_robot.move_to_pose(ACU_POSES["l_d"])
-                time.sleep(1)
-                
-                # Manipulation sequence between steps 5 and 6 (7-step sequence)
-                print("   → Closing gripper")
-                self.state.hardware.gripper.move_to_percentage(100)
-                time.sleep(8)
-                
-                # START RECORDING SESSION 2 (lateral object)
-                recorder.start_session("right")
-                
-                # Get current pose and lift object
-                current_pose = self.state.hardware.ur_robot.current_pose.copy()
-                lift_pose = current_pose.copy()
-                lift_pose[2] += 0.03  # Add 0.03m to Z coordinate
-                
-                print("   → Lifting object (+0.03m)")
-                recorder.set_operation("lift")
-                self.state.hardware.ur_robot.move_to_pose(lift_pose)
-                self._recording_sleep(1, recorder)
-                
-                print("   → Lowering object back to position (-0.03m)")
-                recorder.set_operation("lower")
-                self.state.hardware.ur_robot.move_to_pose(current_pose)
-                self._recording_sleep(2, recorder)
-                
-                print("   → Rotating 20 steps CW")
-                recorder.set_operation("cw")
-                self.state.hardware.stepper.send_step_move_command(20, 'cw')
-                self._recording_sleep(1, recorder)
-                
-                print("   → Rotating 40 steps CCW")
-                recorder.set_operation("ccw")
-                self.state.hardware.stepper.send_step_move_command(40, 'ccw')
-                self._recording_sleep(1, recorder)
-                
-                print("   → Rotating 20 steps CW (back to original)")
-                recorder.set_operation("cw")
-                self.state.hardware.stepper.send_step_move_command(20, 'cw')
-                self._recording_sleep(1, recorder)
-                
-                # STOP RECORDING SESSION 2
-                recorder.stop_session()
-                
-                print("   → Opening gripper")
-                # Ensure adaptive gripping is stopped before opening
-                if self.state.hardware.gripper.is_gripping:
-                    print("   → Stopping adaptive gripping...")
-                    self.state.hardware.gripper.stop_adaptive_gripping()
-                    time.sleep(0.2)
-                # Use opening velocity for faster gripper opening
-                self.state.hardware.gripper.move_to_percentage(CONFIG["gripper_default_open_percent"], 
-                                                             ADAPTIVE_GRIPPING_CONFIG["opening_velocity"])
-                time.sleep(3)
-                
-                # Step 6: Move back to l_u
-                print("   Step 6/6: Moving back to l_u (lateral upper)")
-                self.state.hardware.ur_robot.move_to_pose(ACU_POSES["l_u"])
-                
-                print("✅ Acupuncture Experiment Sequence Completed!")
-                
-            except Exception as e:
-                print(f"❌ Acupuncture sequence failed: {e}")
-        
-        # Run sequence in background thread to not block main loop
-        sequence = threading.Thread(target=sequence_thread, name="AcupunctureSequence", daemon=True)
-        sequence.start()
-        print("🚀 Acupuncture sequence started in background...")
-    
-    def _recording_sleep(self, duration, recorder):
-        """Sleep while updating recording data"""
-        end_time = time.time() + duration
-        while time.time() < end_time:
-            if recorder.recording:
-                recorder.update_recording()
-            time.sleep(0.05)  # Update recording every 50ms
     
     def update_display(self):
         """Update the system display"""
@@ -576,20 +257,6 @@ class GripperControlSystem:
         
         print("-" * 60)
         
-        # Acupuncture recording status
-        recorder = self.state.acupuncture_recorder
-        if recorder:
-            recording_status = "🔴 Recording" if recorder.recording else "⚪ Idle"
-            print("ACUPUNCTURE RECORDING:")
-            print(f"  Status: {recording_status}")
-            if recorder.recording:
-                elapsed = time.time() - recorder.session_start_time
-                samples = len(recorder.fz_samples)
-                print(f"  Session: {recorder.session_name} | Elapsed: {elapsed:.1f}s")
-                print(f"  Operation: {recorder.current_operation} | Samples: {samples}")
-        
-        print("-" * 60)
-        
         # UR Robot status
         ur_status = "Connected" if hw_status['ur_robot']['connected'] else "Disconnected"
         print("UR ROBOT CONTROL:")
@@ -602,14 +269,24 @@ class GripperControlSystem:
         
         print("-" * 60)
         
+        # Data Recording status
+        recording_info = self.state.data_manager.get_session_info()
+        recording_status = "🔴 Recording" if recording_info['status'] == 'recording' else "⚪ Idle"
+        print("DATA RECORDING:")
+        print(f"  Status: {recording_status}")
+        if recording_info['status'] == 'recording':
+            print(f"  Session: {recording_info['session_name']} | Elapsed: {recording_info['elapsed_time_s']:.1f}s")
+        
+        print("-" * 60)
+        
         # Controls
         print("CONTROLS:")
         print("  UR Robot:  [Q/E] Up/Down | [A/D] Left/Right | [W/S] Forward/Backward")
         print("  Gripper Rotation: [J] CCW | [L] CW")
         print("  Diameter:  [1] 1mm | [2/3/4/5] 2-5mm")
-        print("  Gripper:   [O] Open (50%) | [C] Close (Adaptive)")
+        print("  Gripper:   [O] Open (50%) | [C] Close (Adaptive) | [I/K] +/-1% Manual")
         print("  Sensor:    [R] Calibrate Baseline | [Z] Zero Force Sensor")
-        print("  Experiment:[P] Run Acupuncture Sequence (s_u→s_d→s_u→l_u→l_d→l_u)")
+        print("  Recording: [F] Start Session | [G] Stop Session")
         print("  General:   [H] Home Motors* | [SPACE] STOP | [X] Zero Motor Pos | [ESC] Quit")
         print("             *Homing only works when gripper is at default open position (≤50% closed)")
         print("=" * 60)
@@ -694,6 +371,22 @@ class GripperControlSystem:
                     self.state.hardware.gripper.move_to_percentage(100)
                 else:
                     self.state.hardware.gripper.last_message = "Gripping already in progress"
+            elif key.char == 'i':  # Increase gripper close percentage by 1%
+                if self.state.hardware.gripper.connected:
+                    current_closure = self.state.hardware.gripper.gripper_closure_percent
+                    new_closure = min(100.0, current_closure + 1.0)  # Cap at 100%
+                    self.state.hardware.gripper.move_to_percentage(new_closure)
+                    print(f"🔧 Gripper closure: {current_closure:.1f}% → {new_closure:.1f}%")
+                else:
+                    print("❌ Gripper not connected")
+            elif key.char == 'k':  # Decrease gripper close percentage by 1%
+                if self.state.hardware.gripper.connected:
+                    current_closure = self.state.hardware.gripper.gripper_closure_percent
+                    new_closure = max(0.0, current_closure - 1.0)  # Floor at 0%
+                    self.state.hardware.gripper.move_to_percentage(new_closure)
+                    print(f"🔧 Gripper closure: {current_closure:.1f}% → {new_closure:.1f}%")
+                else:
+                    print("❌ Gripper not connected")
 
             # --- Sensor Controls ---
             elif key.char == 'r':  # Calibrate baseline intensity
@@ -709,6 +402,25 @@ class GripperControlSystem:
                         print("❌ Failed to zero Bota force sensor")
                 else:
                     print("❌ Bota force sensor not connected")
+
+            # --- Data Recording Controls ---
+            elif key.char == 'f':  # Start recording session
+                # Generate session name based on config
+                base_name = RECORDING_CONFIG["default_session_name"]
+                if RECORDING_CONFIG["use_timestamp_session_name"]:
+                    session_name = f"{base_name}_{int(time.time())}"
+                else:
+                    session_name = base_name
+                
+                if self.state.data_manager.start_recording_session(session_name, self.state):
+                    print(f"🔴 Started recording session: {session_name}")
+                else:
+                    print("❌ Failed to start recording session")
+            elif key.char == 'g':  # Stop recording session
+                if self.state.data_manager.stop_recording_session():
+                    print("⏹️ Recording session stopped")
+                else:
+                    print("⚠️ No recording session to stop")
 
             # --- Utility Commands ---
             elif key.char == 'h':  # Home stepper motors (safety constraint: gripper must be at default open position or more open)
@@ -749,8 +461,6 @@ class GripperControlSystem:
                     self.state.hardware.stepper.last_message = f"Homing blocked: gripper {gripper_closure:.1f}% closed"
             elif key.char == 'x':  # Reset stepper position to center and angle
                 self.state.hardware.stepper.reset_to_center()
-            elif key.char == 'p':  # Run acupuncture experiment sequence
-                self.run_acupuncture_sequence()
 
         except AttributeError:
             # Handle special keys
@@ -783,11 +493,6 @@ class GripperControlSystem:
             while self.state.running:
                 try:
                     current_time = time.time()
-                    
-                    # Update acupuncture recording if active
-                    if (self.state.acupuncture_recorder and 
-                        self.state.acupuncture_recorder.recording):
-                        self.state.acupuncture_recorder.update_recording()
                     
                     # Check for adaptive gripping conditions
                     if (self.state.hardware.gripper.is_gripping and 

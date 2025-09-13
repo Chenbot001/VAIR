@@ -39,7 +39,7 @@ except ImportError:
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'daimon', 'dmrobotics'))
 
 from config import (
-    CONFIG, DISPLAY_CONFIG, ADAPTIVE_GRIPPING_CONFIG, CENTERLINE_CONFIG
+    CONFIG, DISPLAY_CONFIG, ADAPTIVE_GRIPPING_CONFIG, CENTERLINE_CONFIG, SAFETY_CONFIG
 )
 
 # Import sensor functionality
@@ -76,6 +76,19 @@ class DaimonManager:
         self.angle_history = []
         self.max_history_length = CENTERLINE_CONFIG["history_length"]
         self.smoothing_alpha = CENTERLINE_CONFIG["smoothing_alpha"]
+        
+        # Safety monitoring variables
+        self.last_safety_trigger_time = 0.0
+        self.safety_callback = None  # Callback function for emergency gripper opening
+        self.last_shear_magnitude = 0.0
+        self.last_shear_x = 0.0      # Last shear force X component
+        self.last_shear_y = 0.0      # Last shear force Y component
+        self.safety_triggered = False
+        self.safety_trigger_reason = ""  # Reason for last safety trigger
+        
+        # Baseline shear force components for zeroing
+        self.baseline_shear_x = 0.0
+        self.baseline_shear_y = 0.0
 
     def connect(self):
         """Initialize and configure the depth sensor"""
@@ -196,6 +209,50 @@ class DaimonManager:
                 
         except Exception as e:
             self.last_message = f"ERR: Calibration failed: {e}"
+            return False
+    
+    def calibrate_baseline_shear_force(self, samples=10):
+        """
+        Calibrate the baseline shear force components when gripper is fully open and no object present.
+        This sets the current shear readings as the new baseline (zero point).
+        
+        Args:
+            samples (int): Number of samples to average for baseline calculation
+            
+        Returns:
+            bool: True if calibration successful, False otherwise
+        """
+        if not self.sensor or not SENSOR_AVAILABLE:
+            self.last_message = "ERR: Sensor not available for shear force calibration"
+            return False
+        
+        try:
+            total_shear_x = 0.0
+            total_shear_y = 0.0
+            valid_samples = 0
+            
+            for i in range(samples):
+                # Get current shear force components
+                resultant_data = self.get_resultant_shear_vector(scale=20.0, grid_n=15)
+                if resultant_data is not None:
+                    (shear_x, shear_y), force_magnitude = resultant_data
+                    total_shear_x += shear_x
+                    total_shear_y += shear_y
+                    valid_samples += 1
+                time.sleep(0.1)
+            
+            if valid_samples > 0:
+                self.baseline_shear_x = total_shear_x / valid_samples
+                self.baseline_shear_y = total_shear_y / valid_samples
+                self.last_message = f"Shear baseline calibrated: X={self.baseline_shear_x:.4f}N, Y={self.baseline_shear_y:.4f}N"
+                print(f"✓ Baseline shear force calibrated: X={self.baseline_shear_x:.4f}N, Y={self.baseline_shear_y:.4f}N")
+                return True
+            else:
+                self.last_message = "ERR: No valid samples for shear force calibration"
+                return False
+                
+        except Exception as e:
+            self.last_message = f"ERR: Shear force calibration failed: {e}"
             return False
     
     def compute_centerline_angle(self, centerline_points, state=None):
@@ -479,6 +536,166 @@ class DaimonManager:
         
         return depth_img_with_overlay
     
+    def add_resultant_shear_overlay(self, shear_img, resultant_vector, resultant_force_magnitude):
+        """
+        Add resultant shear vector overlay to the shear image.
+        
+        Args:
+            shear_img: The shear image (BGR format)
+            resultant_vector: Tuple (shear_x, shear_y) of resultant shear force components
+            resultant_force_magnitude: The magnitude of the resultant shear force (not displayed)
+            
+        Returns:
+            The shear image with resultant force X and Y component values overlaid
+        """
+        if not CV2_AVAILABLE or shear_img is None or resultant_vector is None:
+            return shear_img
+        
+        # Create a copy of the shear image to avoid modifying the original
+        shear_img_with_overlay = shear_img.copy()
+        
+        # Get image dimensions
+        height, width = shear_img.shape[:2]
+        
+        # Get shear force components
+        shear_x, shear_y = resultant_vector
+        
+        # Add text showing the shear force X and Y components
+        force_x_text = f"Force X: {shear_x:.3f}N"
+        force_y_text = f"Force Y: {shear_y:.3f}N"
+        
+        # Set text properties
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 0.4
+        color = (0, 255, 255)  # Cyan color
+        thickness = 1
+        
+        # Get text sizes for positioning
+        (x_text_width, x_text_height), _ = cv2.getTextSize(force_x_text, font, font_scale, thickness)
+        (y_text_width, y_text_height), _ = cv2.getTextSize(force_y_text, font, font_scale, thickness)
+        
+        # Position text in top-right corner
+        x_x = width - x_text_width - 10
+        x_y = x_text_height + 15
+        y_x = width - y_text_width - 10
+        y_y = x_text_height + y_text_height + 25
+        
+        # Add semi-transparent background rectangles for better readability
+        overlay = shear_img_with_overlay.copy()
+        cv2.rectangle(overlay, (x_x-5, x_y-x_text_height-5), (x_x+x_text_width+5, x_y+5), (0, 0, 0), -1)
+        cv2.rectangle(overlay, (y_x-5, y_y-y_text_height-5), (y_x+y_text_width+5, y_y+5), (0, 0, 0), -1)
+        cv2.addWeighted(overlay, 0.6, shear_img_with_overlay, 0.4, 0, shear_img_with_overlay)
+        
+        # Add the text
+        cv2.putText(shear_img_with_overlay, force_x_text, (x_x, x_y), font, font_scale, color, thickness)
+        cv2.putText(shear_img_with_overlay, force_y_text, (y_x, y_y), font, font_scale, color, thickness)
+        
+        return shear_img_with_overlay
+    
+    def set_safety_callback(self, callback_function):
+        """
+        Set the callback function for emergency gripper opening.
+        
+        Args:
+            callback_function: Function to call when safety threshold is exceeded.
+                              Should accept no parameters and trigger gripper opening.
+        """
+        self.safety_callback = callback_function
+        self.last_message = "Safety callback function registered"
+    
+    def check_shear_safety(self, shear_force_x, shear_force_y, shear_magnitude):
+        """
+        Check if shear force components exceed individual safety thresholds and trigger emergency response.
+        
+        Args:
+            shear_force_x (float): Current shear force X component in Newtons
+            shear_force_y (float): Current shear force Y component in Newtons
+            shear_magnitude (float): Current shear force magnitude for logging
+            
+        Returns:
+            bool: True if safety action was triggered, False otherwise
+        """
+        if not SAFETY_CONFIG["safety_check_enabled"]:
+            return False
+        
+        current_time = time.time()
+        
+        # Update tracking variables
+        self.last_shear_x = abs(shear_force_x)  # Use absolute values for comparison
+        self.last_shear_y = abs(shear_force_y)
+        self.last_shear_magnitude = shear_magnitude
+        
+        # Check if we're in cooldown period
+        if (current_time - self.last_safety_trigger_time) < SAFETY_CONFIG["safety_cooldown_seconds"]:
+            return False
+        
+        # Check individual component thresholds
+        x_threshold = SAFETY_CONFIG["shear_x_threshold_n"]
+        y_threshold = SAFETY_CONFIG["shear_y_threshold_n"]
+        
+        x_exceeded = self.last_shear_x > x_threshold
+        y_exceeded = self.last_shear_y > y_threshold
+        
+        # Trigger if any threshold is exceeded
+        if x_exceeded or y_exceeded:
+            self.last_safety_trigger_time = current_time
+            self.safety_triggered = True
+            
+            # Determine trigger reason
+            if x_exceeded and y_exceeded:
+                self.safety_trigger_reason = f"Both X ({self.last_shear_x:.3f}N > {x_threshold}N) and Y ({self.last_shear_y:.3f}N > {y_threshold}N)"
+            elif x_exceeded:
+                self.safety_trigger_reason = f"X-axis ({self.last_shear_x:.3f}N > {x_threshold}N)"
+            else:
+                self.safety_trigger_reason = f"Y-axis ({self.last_shear_y:.3f}N > {y_threshold}N)"
+            
+            # Trigger emergency gripper opening if callback is available
+            if self.safety_callback:
+                try:
+                    self.safety_callback()
+                    self.last_message = f"🚨 SAFETY: {self.safety_trigger_reason} - Gripper opened!"
+                    print(f"🚨 SAFETY TRIGGERED: Excessive shear force detected - {self.safety_trigger_reason} - Opening gripper to {SAFETY_CONFIG['emergency_open_percent']}%")
+                    return True
+                except Exception as e:
+                    self.last_message = f"🚨 SAFETY: Shear threshold exceeded but gripper opening failed: {e}"
+                    print(f"❌ Safety callback failed: {e}")
+            else:
+                self.last_message = f"🚨 SAFETY: {self.safety_trigger_reason} but no callback registered"
+                print(f"⚠️ Safety threshold exceeded but no callback registered")
+        else:
+            # Reset safety trigger flag if we're below both thresholds with hysteresis
+            if self.safety_triggered:
+                x_reset = self.last_shear_x < (x_threshold * 0.8)  # 20% hysteresis
+                y_reset = self.last_shear_y < (y_threshold * 0.8)  # 20% hysteresis
+                if x_reset and y_reset:
+                    self.safety_triggered = False
+                    self.safety_trigger_reason = ""
+        
+        return False
+    
+    def get_safety_status(self):
+        """
+        Get current safety monitoring status.
+        
+        Returns:
+            dict: Safety status information
+        """
+        return {
+            'safety_enabled': SAFETY_CONFIG["safety_check_enabled"],
+            'shear_x_threshold': SAFETY_CONFIG["shear_x_threshold_n"],
+            'shear_y_threshold': SAFETY_CONFIG["shear_y_threshold_n"], 
+            'shear_threshold': SAFETY_CONFIG["shear_force_threshold_n"],  # Deprecated - for backward compatibility
+            'last_shear_x': self.last_shear_x,
+            'last_shear_y': self.last_shear_y,
+            'last_shear_magnitude': self.last_shear_magnitude,
+            'baseline_shear_x': self.baseline_shear_x,
+            'baseline_shear_y': self.baseline_shear_y,
+            'safety_triggered': self.safety_triggered,
+            'safety_trigger_reason': self.safety_trigger_reason,
+            'time_since_last_trigger': time.time() - self.last_safety_trigger_time,
+            'callback_registered': self.safety_callback is not None
+        }
+    
     def set_contact_threshold(self, threshold):
         """
         Set the contact threshold for centerline detection.
@@ -549,6 +766,21 @@ class DaimonManager:
             # Create deformation and shear images
             deformation_img = put_arrows_on_image(black_img.copy(), deformation * 20)
             shear_img = put_arrows_on_image(black_img.copy(), shear * 20)
+            
+            # Calculate and add resultant shear vector overlay
+            try:
+                resultant_data = self.get_resultant_shear_vector(scale=20.0, grid_n=15)
+                if resultant_data is not None:
+                    resultant_vector, resultant_force_magnitude = resultant_data
+                    shear_img = self.add_resultant_shear_overlay(shear_img, resultant_vector, resultant_force_magnitude)
+                    
+                    # Safety check: Monitor individual shear force components
+                    shear_force_x, shear_force_y = resultant_vector
+                    self.check_shear_safety(shear_force_x, shear_force_y, resultant_force_magnitude)
+                    
+            except Exception as e:
+                # Continue even if resultant shear calculation fails
+                self.last_message = f"WARN: Resultant shear overlay failed: {e}"
             
             # Ensure all images have the same height for concatenation
             height = depth_img.shape[0]
@@ -657,35 +889,6 @@ class DaimonManager:
             return self.sensor.getShear()
         except Exception as e:
             self.last_message = f"ERR: Failed to get shear data: {e}"
-            return None
-    
-    def get_instantaneous_depth_array(self):
-        """
-        Capture instantaneous depth intensity as a full array of intensities.
-        
-        Returns:
-            numpy.ndarray or None: Full depth intensity array, or None if sensor unavailable
-        """
-        if not self.sensor or not SENSOR_AVAILABLE:
-            self.last_message = "ERR: Sensor not available for depth array capture"
-            return None
-        
-        if not NUMPY_AVAILABLE:
-            self.last_message = "ERR: Numpy not available for depth array capture"
-            return None
-        
-        try:
-            depth_array = self.sensor.getDepth()
-            
-            if depth_array is not None and depth_array.size > 0:
-                # Return a copy to prevent modification of the original data
-                return depth_array.copy()
-            else:
-                self.last_message = "ERR: No depth array data available"
-                return None
-                
-        except Exception as e:
-            self.last_message = f"ERR: Failed to capture depth array: {e}"
             return None
     
     def get_deformation_mesh(self, scale=20.0, grid_n=15):
@@ -839,9 +1042,9 @@ class DaimonManager:
             self.last_message = f"ERR: Failed to calculate deformation integral: {e}"
             return None
     
-    def get_resultant_shear_vector(self, scale=20.0, grid_n=15):
+    def get_resultant_shear_vector(self, scale=20.0, grid_n=15):  
         """
-        Calculate the resultant shear vector by summing all shear arrow vectors in the mesh.
+        Calculate the resultant shear force vector by summing all shear arrow vectors in the mesh.
         This provides the x and y components of the net shear force across the sensor surface.
         
         Args:
@@ -849,7 +1052,7 @@ class DaimonManager:
             grid_n (int): Number of arrows per axis (default: 15, creates 15x15 grid = 225 arrows)
         
         Returns:
-            tuple or None: (shear_x, shear_y) components of resultant shear vector, or None if unavailable
+            tuple or None: ((shear_force_x, shear_force_y), force_magnitude) components of resultant shear force vector in Newtons, or None if unavailable
         """
         if not self.sensor or not SENSOR_AVAILABLE:
             self.last_message = "ERR: Sensor not available for resultant shear vector calculation"
@@ -889,11 +1092,30 @@ class DaimonManager:
             shear_x = float(resultant_vector[0])
             shear_y = float(resultant_vector[1])
             
-            # Calculate resultant magnitude for logging
+            # Calculate resultant magnitude 
             resultant_magnitude = float(np.linalg.norm(resultant_vector))
+
+            # Convert magnitude to force using the provided formula: shear_force = 0.0051*magnitude - 0.4432
+            force_magnitude = 0.0051 * resultant_magnitude - 0.4432
             
-            self.last_message = f"Resultant shear vector calculated: ({shear_x:.6f}, {shear_y:.6f}), magnitude: {resultant_magnitude:.6f} from {len(magnitudes)} arrows"
-            return (shear_x, shear_y)
+            # Calculate force components by scaling the unit vector by the force magnitude
+            if resultant_magnitude > 0:
+                force_unit_x = shear_x / resultant_magnitude
+                force_unit_y = shear_y / resultant_magnitude
+                shear_force_x = force_magnitude * force_unit_x
+                shear_force_y = force_magnitude * force_unit_y
+            else:
+                shear_force_x = 0.0
+                shear_force_y = 0.0
+                force_magnitude = 0.0
+            
+            # Apply baseline correction to get net shear force components
+            net_shear_force_x = shear_force_x - self.baseline_shear_x
+            net_shear_force_y = shear_force_y - self.baseline_shear_y
+            
+            self.last_message = f"Resultant shear force calculated: ({net_shear_force_x:.6f}, {net_shear_force_y:.6f})N, magnitude: {force_magnitude:.6f}N from {len(magnitudes)} arrows"
+            
+            return (net_shear_force_x, net_shear_force_y), force_magnitude
             
         except Exception as e:
             self.last_message = f"ERR: Failed to calculate resultant shear vector: {e}"
@@ -951,7 +1173,7 @@ class DaimonManager:
         
         try:
             # Capture all data components
-            depth_array = self.get_instantaneous_depth_array()
+            depth_array = self.sensor.getDepth()
             deformation_mesh = self.get_deformation_mesh(scale=scale, grid_n=grid_n)
             shear_mesh = self.get_shear_mesh(scale=scale, grid_n=grid_n)
             
@@ -1250,10 +1472,24 @@ class SensorManager:
                     print("✓ Baseline intensity calibrated")
                 else:
                     print("⚠ Baseline calibration failed")
+                
+                # Calibrate baseline shear force components
+                print("Calibrating baseline shear force...")
+                if self.visuotactile.calibrate_baseline_shear_force():
+                    print("✓ Baseline shear force calibrated")
+                else:
+                    print("⚠ Baseline shear force calibration failed")
         
         # Initialize Bota force sensor
         if self.available['bota']:
             self.available['bota'] = self.bota.connect()
+            if self.available['bota']:
+                # Zero the Bota force sensor readings
+                print("Zeroing Bota force sensor...")
+                if self.bota.zero_fz():
+                    print("✓ Bota force sensor zeroed")
+                else:
+                    print("⚠ Bota force sensor zeroing failed")
         
         return self.available
     

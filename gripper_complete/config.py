@@ -79,3 +79,13 @@ RECORDING_CONFIG = {
     "use_timestamp_session_name": True,  # If True, append timestamp to session name
     "create_session_subdirectories": True,  # If True, create subdirectory for each session
 }
+
+# Safety configuration
+SAFETY_CONFIG = {
+    "shear_force_threshold_n": 2.0,  # Deprecated - kept for backward compatibility
+    "shear_x_threshold_n": 10.0,     # Maximum allowed shear force in X direction (Newtons)
+    "shear_y_threshold_n": 1.0,     # Maximum allowed shear force in Y direction (Newtons)
+    "emergency_open_percent": 50,    # Gripper position to open to during emergency
+    "safety_check_enabled": True,    # Enable/disable safety monitoring
+    "safety_cooldown_seconds": 2.0,  # Minimum time between safety triggers
+}

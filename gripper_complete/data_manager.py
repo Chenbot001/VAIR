@@ -296,9 +296,10 @@ class DataManager:
             shear_vector_x = None
             shear_vector_y = None
             try:
-                shear_vector = sensor.get_resultant_shear_vector(scale=20.0, grid_n=15)
-                if shear_vector is not None:
-                    shear_vector_x, shear_vector_y = shear_vector
+                resultant_data = sensor.get_resultant_shear_vector(scale=20.0, grid_n=15)
+                if resultant_data is not None:
+                    # New format returns ((x, y), magnitude)
+                    (shear_vector_x, shear_vector_y), force_magnitude = resultant_data
             except Exception as e:
                 print(f"Warning: Could not get resultant shear vector: {e}")
             
@@ -335,8 +336,10 @@ class DataManager:
         try:
             # Get DM motor (gripper) data
             dm_position = None
+            gripper_closure_percent = None
             if system_state.hardware.gripper.connected:
                 dm_position = getattr(system_state.hardware.gripper, 'gripper_position_rad', None)
+                gripper_closure_percent = getattr(system_state.hardware.gripper, 'gripper_closure_percent', None)
             
             # Get stepper motor data
             m1_position = None
@@ -355,6 +358,7 @@ class DataManager:
             
             return {
                 "dm_motor_position_rad": round(dm_position, 6) if dm_position is not None else None,
+                "gripper_closure_percent": round(gripper_closure_percent, 2) if gripper_closure_percent is not None else None,
                 "m1_stepper_position": m1_position,
                 "m2_stepper_position": m2_position,
                 "step_size": target_steps,  # This now tracks the target_steps from config

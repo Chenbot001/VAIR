@@ -8,10 +8,19 @@ import threading
 import signal
 import sys
 import os
+import cv2
 
 from pynput import keyboard
 
-from config import CONFIG, DISPLAY_CONFIG, ADAPTIVE_GRIPPING_CONFIG, RECORDING_CONFIG
+# Import for finding hardware devices on Windows
+try:
+    import wmi
+except ImportError:
+    print("Warning: The 'wmi' library is required for camera detection.")
+    print("Camera features will be disabled. Install with: pip install wmi")
+    wmi = None
+
+from config import CONFIG, DISPLAY_CONFIG, ADAPTIVE_GRIPPING_CONFIG, RECORDING_CONFIG, SAFETY_CONFIG
 from hardware_manager import HardwareManager
 from sensor_manager import SensorManager
 from data_manager import DataManager
@@ -66,6 +75,21 @@ class GripperControlSystem:
         
         # Initialize sensors
         sensor_status = self.state.sensors.initialize()
+        
+        # Register safety callback for emergency gripper opening
+        if self.state.sensors.visuotactile.connected and self.state.hardware.gripper.connected:
+            def emergency_gripper_open():
+                """Emergency callback to open gripper when safety threshold is exceeded"""
+                try:
+                    self.state.hardware.gripper.move_to_percentage(
+                        SAFETY_CONFIG["emergency_open_percent"], 
+                        velocity=ADAPTIVE_GRIPPING_CONFIG["opening_velocity"]
+                    )
+                except Exception as e:
+                    print(f"❌ Emergency gripper opening failed: {e}")
+            
+            self.state.sensors.visuotactile.set_safety_callback(emergency_gripper_open)
+            print(f"✓ Safety monitoring enabled: X-threshold = {SAFETY_CONFIG['shear_x_threshold_n']}N, Y-threshold = {SAFETY_CONFIG['shear_y_threshold_n']}N")
         
         # Start background threads
         self._start_background_threads()
@@ -194,24 +218,18 @@ class GripperControlSystem:
         print(f"ROTATION CONTROL (Step-Based):")
         print(f"  Motor Position: M1={hw_status['stepper']['m1_pos']:<4} | M2={hw_status['stepper']['m2_pos']:<4}")
         print(f"  Target Steps:   {CONFIG['fixed_target_steps']:>6}")
-        print(f"  Object Diameter: {self.state.object_diameter_mm}mm")
-        print(f"  Speed (steps/s): {CONFIG['fixed_motor_speed']:<4}")
-        print(f"  Status: {'Connected' if hw_status['stepper']['connected'] else 'Disconnected'}")
-        print(f"  Last Message: {hw_status['stepper']['last_message']}")
+        stepper_status = "Connected" if hw_status['stepper']['connected'] else "Disconnected"
+        print(f"  Status: {stepper_status} | {hw_status['stepper']['last_message']}")
         
         print("-" * 60)
         
         # Gripper status
         gripper_status = "Connected" if hw_status['gripper']['connected'] else "Disconnected"
         gripper_closure = hw_status['gripper']['closure_percent']
-        homing_allowed = gripper_closure <= CONFIG["gripper_default_open_percent"]  # Same threshold as in key handler
-        homing_status = "✅ ALLOWED" if homing_allowed else "❌ BLOCKED"
         
         print("GRIPPER CONTROL (DM Motor):")
         print(f"  Closure: {gripper_closure:.1f}% | Position: {hw_status['gripper']['position_rad']:.3f} rad")
-        print(f"  Homing Status: {homing_status} (requires ≤{CONFIG['gripper_default_open_percent']}% closure)")
-        print(f"  Status: {gripper_status}")
-        print(f"  Last Message: {hw_status['gripper']['last_message']}")
+        print(f"  Status: {gripper_status} | {hw_status['gripper']['last_message']}")
         
         print("-" * 60)
         
@@ -220,8 +238,6 @@ class GripperControlSystem:
         print("DEPTH SENSOR:")
         print(f"  Max Intensity: {sensor_status['visuotactile']['max_intensity']:.3f}")
         print(f"  Baseline: {sensor_status['visuotactile']['baseline']:.3f} | Net: {sensor_status['visuotactile']['net_intensity']:.3f}")
-        if sensor_status['visuotactile']['connected']:
-            print(f"  Sensor FPS: {sensor_status['visuotactile']['sensor_fps']:.1f}")
         print(f"  Status: {sensor_available}")
         
         print("-" * 60)
@@ -231,29 +247,26 @@ class GripperControlSystem:
         bota_connected = "Connected" if bota_status['connected'] else "Disconnected"
         print("BOTA FORCE SENSOR:")
         print(f"  Force Z (Fz): {bota_status['current_fz']:.4f} N | Offset: {bota_status['fz_offset']:.4f} N")
-        if bota_status['latest_data'] and 'Mz' in bota_status['latest_data']:
-            torque_z = bota_status['latest_data']['Mz']
-            print(f"  Torque Z (Mz): {torque_z:.4f} Nm")
-        else:
-            print(f"  Torque Z (Mz): N/A")
-        if bota_status['sampling_rate']:
-            print(f"  Sampling Rate: {bota_status['sampling_rate']} Hz")
-        else:
-            print(f"  Sampling Rate: N/A")
-        print(f"  Status: {bota_connected}")
-        print(f"  Last Message: {bota_status['last_message']}")
+        print(f"  Status: {bota_connected} | {bota_status['last_message']}")
         
         print("-" * 60)
         
-        # Adaptive gripping status
-        gripping_status = "Active" if hw_status['gripper']['is_gripping'] else "Inactive"
-        print("ADAPTIVE GRIPPING:")
-        print(f"  Threshold: {ADAPTIVE_GRIPPING_CONFIG['threshold']:.3f}")
-        if hw_status['gripper']['is_gripping']:
-            net_intensity = sensor_status['visuotactile']['net_intensity']
-            threshold = ADAPTIVE_GRIPPING_CONFIG['threshold']
-            print(f"  Net Intensity: {net_intensity:.3f} / {threshold:.3f}")
-            print(f"  Will Stop: {net_intensity > threshold}")
+        # Safety monitoring status
+        if sensor_status['visuotactile']['connected']:
+            safety_status = self.state.sensors.visuotactile.get_safety_status()
+            safety_enabled = "🟢 Enabled" if safety_status['safety_enabled'] else "🔴 Disabled"
+            safety_state = "🚨 TRIGGERED" if safety_status['safety_triggered'] else "✅ Normal"
+            print("SAFETY MONITORING:")
+            print(f"  Status: {safety_enabled} | State: {safety_state}")
+            print(f"  X-Threshold: {safety_status['shear_x_threshold']:.1f}N | Y-Threshold: {safety_status['shear_y_threshold']:.1f}N")
+            print(f"  Current X: {safety_status['last_shear_x']:.3f}N | Current Y: {safety_status['last_shear_y']:.3f}N")
+            if safety_status['safety_triggered'] and safety_status['safety_trigger_reason']:
+                print(f"  Trigger Reason: {safety_status['safety_trigger_reason']}")
+            if safety_status['time_since_last_trigger'] < 10:  # Show recent triggers
+                print(f"  Last Trigger: {safety_status['time_since_last_trigger']:.1f}s ago")
+        else:
+            print("SAFETY MONITORING:")
+            print(f"  Status: ⚪ Unavailable (sensor disconnected)")
         
         print("-" * 60)
         
@@ -264,8 +277,7 @@ class GripperControlSystem:
             pose = hw_status['ur_robot']['current_pose']
             print(f"  Position: X={pose[0]:.3f} | Y={pose[1]:.3f} | Z={pose[2]:.3f}")
             print(f"  Rotation: RX={pose[3]:.3f} | RY={pose[4]:.3f} | RZ={pose[5]:.3f}")
-        print(f"  Status: {ur_status}")
-        print(f"  Last Message: {hw_status['ur_robot']['last_message']}")
+        print(f"  Status: {ur_status} | {hw_status['ur_robot']['last_message']}")
         
         print("-" * 60)
         
@@ -283,9 +295,8 @@ class GripperControlSystem:
         print("CONTROLS:")
         print("  UR Robot:  [Q/E] Up/Down | [A/D] Left/Right | [W/S] Forward/Backward")
         print("  Gripper Rotation: [J] CCW | [L] CW")
-        print("  Diameter:  [1] 1mm | [2/3/4/5] 2-5mm")
         print("  Gripper:   [O] Open (50%) | [C] Close (Adaptive) | [I/K] +/-1% Manual")
-        print("  Sensor:    [R] Calibrate Baseline | [Z] Zero Force Sensor")
+        print("  Sensor:    [R] Calibrate Baseline | [Z] Zero Force Sensor | [B] Zero Shear Force | [T] Toggle Safety")
         print("  Recording: [F] Start Session | [G] Stop Session")
         print("  General:   [H] Home Motors* | [SPACE] STOP | [X] Zero Motor Pos | [ESC] Quit")
         print("             *Homing only works when gripper is at default open position (≤50% closed)")
@@ -368,7 +379,7 @@ class GripperControlSystem:
                                                              ADAPTIVE_GRIPPING_CONFIG["opening_velocity"])
             elif key.char == 'c':  # Close gripper (adaptive)
                 if not self.state.hardware.gripper.is_gripping:
-                    self.state.hardware.gripper.move_to_percentage(100)
+                    self.state.hardware.gripper.move_to_percentage(95)
                 else:
                     self.state.hardware.gripper.last_message = "Gripping already in progress"
             elif key.char == 'i':  # Increase gripper close percentage by 1%
@@ -402,6 +413,26 @@ class GripperControlSystem:
                         print("❌ Failed to zero Bota force sensor")
                 else:
                     print("❌ Bota force sensor not connected")
+            elif key.char == 'b':  # Zero baseline shear force components
+                if self.state.sensors.visuotactile.connected:
+                    if self.state.sensors.visuotactile.calibrate_baseline_shear_force():
+                        print("✅ Baseline shear force components zeroed")
+                    else:
+                        print("❌ Failed to zero baseline shear force")
+                else:
+                    print("❌ Depth sensor not connected")
+            elif key.char == 't':  # Toggle safety monitoring
+                if self.state.sensors.visuotactile.connected:
+                    # Toggle safety monitoring in config
+                    SAFETY_CONFIG["safety_check_enabled"] = not SAFETY_CONFIG["safety_check_enabled"]
+                    status = "enabled" if SAFETY_CONFIG["safety_check_enabled"] else "disabled"
+                    print(f"🔧 Safety monitoring {status}")
+                    
+                    # Reset safety state when re-enabling
+                    if SAFETY_CONFIG["safety_check_enabled"]:
+                        self.state.sensors.visuotactile.safety_triggered = False
+                else:
+                    print("❌ Safety monitoring unavailable (sensor disconnected)")
 
             # --- Data Recording Controls ---
             elif key.char == 'f':  # Start recording session

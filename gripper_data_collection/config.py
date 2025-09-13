@@ -72,7 +72,7 @@ CONFIG = {
 }
 
 # Gripper position limits (in radians)
-GRIPPER_MIN_POS = -1.38  # Fully closed position
+GRIPPER_MIN_POS = -1.37  # Fully closed position
 GRIPPER_MAX_POS = 0.0    # Fully open position
 
 # Constants for encoder decoding

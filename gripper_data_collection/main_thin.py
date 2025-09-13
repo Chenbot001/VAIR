@@ -32,7 +32,7 @@ from utils import get_steps_per_degree
 
 # --- Camera Configuration ---
 # Unique part of your webcam's Device Instance Path:
-TARGET_SERIAL_ID = "2B9D0D7D&0&0000"
+TARGET_SERIAL_ID = "19369FC5&0&0000"
 
 # Stabilization parameters (always enabled)
 ANGLE_SMOOTHING_FACTOR = 0.8  # Higher = more smoothing (0.0-1.0)
@@ -115,7 +115,8 @@ class AngleStabilizer:
 
 class CameraDataCollector:
     """Class to collect camera-based angle data during thin wire manipulation"""
-    def __init__(self):
+    def __init__(self, system_state=None):
+        self.system_state = system_state  # Reference to system state for accessing hardware/sensor data
         self.is_recording = False
         self.recording_data = []
         self.recording_metadata = {}
@@ -124,6 +125,8 @@ class CameraDataCollector:
         self.initial_angle = None
         self.final_angle = None
         self.csv_file_path = os.path.join("gripper_test", "encoder_data_steps.csv")
+        
+        # CSV Format: diameter, speed, step, angle, direction, gripper_position_rad, gripper_closure_percent, max_depth_intensity
         
         # Counter for consecutive saves with same diameter+target_steps combination
         self.consecutive_saves_counter = 0
@@ -175,7 +178,7 @@ class CameraDataCollector:
                 time.sleep(0.1)  # Check every 100ms
             
             # Stop recording after 5 seconds
-            self.stop_recording()
+            self.stop_recording(self.system_state)
             
         except Exception as e:
             print(f"❌ Recording worker error: {e}")
@@ -192,7 +195,7 @@ class CameraDataCollector:
             })
             self.final_angle = current_angle  # Keep updating final angle
     
-    def stop_recording(self):
+    def stop_recording(self, system_state=None):
         """Stop recording and process data"""
         if not self.is_recording:
             return
@@ -203,8 +206,8 @@ class CameraDataCollector:
         angular_displacement = self._calculate_angular_displacement()
         
         if angular_displacement is not None:
-            # Save to CSV
-            self._save_to_csv(angular_displacement)
+            # Save to CSV with additional system data
+            self._save_to_csv(angular_displacement, system_state)
             print(f"✅ Recording completed: Angular displacement = {angular_displacement:.2f}°")
         else:
             print("❌ Recording failed: Could not calculate reliable angular displacement")
@@ -244,8 +247,8 @@ class CameraDataCollector:
         self.consecutive_saves_counter = 0
         print(f"🔄 Data collection counter reset")
     
-    def _save_to_csv(self, angular_displacement):
-        """Save recording data to CSV file"""
+    def _save_to_csv(self, angular_displacement, system_state=None):
+        """Save recording data to CSV file with additional system data"""
         try:
             # Ensure directory exists
             os.makedirs(os.path.dirname(self.csv_file_path), exist_ok=True)
@@ -255,6 +258,22 @@ class CameraDataCollector:
             
             # Ensure angular displacement is strictly non-negative
             abs_angular_displacement = abs(angular_displacement)
+            
+            # Get additional system data if available
+            gripper_position_rad = 0.0
+            gripper_closure_percent = 0.0
+            max_depth_intensity = 0.0
+            
+            if system_state is not None:
+                try:
+                    hw_status = system_state.hardware.get_status()
+                    sensor_status = system_state.sensors.get_status()
+                    
+                    gripper_position_rad = hw_status['gripper']['position_rad']
+                    gripper_closure_percent = hw_status['gripper']['closure_percent']
+                    max_depth_intensity = sensor_status['visuotactile']['max_intensity']
+                except Exception as e:
+                    print(f"⚠ Warning: Could not capture additional system data: {e}")
             
             # Check if diameter+target_steps combination has changed
             current_combination = {
@@ -272,7 +291,7 @@ class CameraDataCollector:
             self.consecutive_saves_counter += 1
             
             with open(self.csv_file_path, 'a', newline='') as csvfile:
-                fieldnames = ['diameter', 'speed', 'step', 'angle', 'direction']
+                fieldnames = ['diameter', 'speed', 'step', 'angle', 'direction', 'gripper_position_rad', 'gripper_closure_percent', 'max_depth_intensity']
                 writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
                 
                 # Write header if file is new
@@ -284,8 +303,11 @@ class CameraDataCollector:
                     'diameter': self.recording_metadata['diameter_mm'],
                     'speed': self.recording_metadata['speed'], 
                     'step': self.recording_metadata['target_steps'],
-                    'measured_angle': f"{abs_angular_displacement:.2f}",  
-                    'direction': self.recording_metadata['direction']
+                    'angle': f"{abs_angular_displacement:.2f}",
+                    'direction': self.recording_metadata['direction'],
+                    'gripper_position_rad': f"{gripper_position_rad:.6f}",
+                    'gripper_closure_percent': f"{gripper_closure_percent:.1f}",
+                    'max_depth_intensity': f"{max_depth_intensity:.6f}"
                 })
                 
                 # Update latest saved data for display
@@ -295,11 +317,14 @@ class CameraDataCollector:
                     'speed': self.recording_metadata['speed'],
                     'direction': self.recording_metadata['direction'],
                     'angle': abs_angular_displacement,
+                    'gripper_position_rad': gripper_position_rad,
+                    'gripper_closure_percent': gripper_closure_percent,
+                    'max_depth_intensity': max_depth_intensity,
                     'saved': True,
                     'consecutive_count': self.consecutive_saves_counter
                 }
                 
-                print(f"💾 Data saved to CSV: {self.recording_metadata['diameter_mm']}mm | {self.recording_metadata['target_steps']} steps | {abs_angular_displacement:.2f}° | Count: {self.consecutive_saves_counter}")
+                print(f"💾 Data saved to CSV: {self.recording_metadata['diameter_mm']}mm | {self.recording_metadata['target_steps']} steps | {abs_angular_displacement:.2f}° | Grip: {gripper_closure_percent:.1f}% | Depth: {max_depth_intensity:.3f} | Count: {self.consecutive_saves_counter}")
                 
         except Exception as e:
             print(f"❌ Error saving to CSV: {e}")
@@ -471,7 +496,7 @@ class SystemState:
         self.show_camera_windows = True  # Enabled by default for better visualization
         
         # Data collection for thin wire recordings
-        self.data_collector = CameraDataCollector()
+        self.data_collector = CameraDataCollector(self)  # Pass system state reference
         
         # Thread references
         self.threads = []
@@ -661,7 +686,7 @@ class GripperControlSystem:
         
         # Stop any ongoing recording
         if self.state.data_collector.is_recording:
-            self.state.data_collector.stop_recording()
+            self.state.data_collector.stop_recording(self.state)
             print("✓ Data recording stopped")
         
         # Clean up hardware and sensors
@@ -828,10 +853,10 @@ class GripperControlSystem:
                 # Check gripper closure before allowing data recording
                 hw_status = self.state.hardware.get_status()
                 gripper_closure = hw_status['gripper']['closure_percent']
-                
-                # Start camera data collection for 5 seconds (only if gripper is 100% closed)
-                if gripper_closure < 100.0:
-                    print("⚠ Data recording disabled: Gripper must be 100% closed for recording")
+
+                # Start camera data collection for 5 seconds (only if gripper is >90% closed)
+                if gripper_closure < 90.0:
+                    print("⚠ Data recording disabled: Gripper must be >90% closed for recording")
                 elif self.state.camera_enabled and initial_angle is not None:
                     self.state.data_collector.start_recording(
                         'ccw', 
@@ -860,9 +885,9 @@ class GripperControlSystem:
                 hw_status = self.state.hardware.get_status()
                 gripper_closure = hw_status['gripper']['closure_percent']
                 
-                # Start camera data collection for 5 seconds (only if gripper is 100% closed)
-                if gripper_closure < 100.0:
-                    print("⚠ Data recording disabled: Gripper must be 100% closed for recording")
+                # Start camera data collection for 5 seconds (only if gripper is >90% closed)
+                if gripper_closure < 90.0:
+                    print("⚠ Data recording disabled: Gripper must be >90% closed for recording")
                 elif self.state.camera_enabled and initial_angle is not None:
                     self.state.data_collector.start_recording(
                         'cw', 
@@ -875,6 +900,23 @@ class GripperControlSystem:
                     print("⚠ Camera not available for data collection")
                 else:
                     print("⚠ No initial angle available for data collection")
+            
+            elif key.char == 'i':  # Increase gripper close percentage by 1%
+                if self.state.hardware.gripper.connected:
+                    current_closure = self.state.hardware.gripper.gripper_closure_percent
+                    new_closure = min(100.0, current_closure + 1.0)  # Cap at 100%
+                    self.state.hardware.gripper.move_to_percentage(new_closure)
+                    print(f"🔧 Gripper closure: {current_closure:.1f}% → {new_closure:.1f}%")
+                else:
+                    print("❌ Gripper not connected")
+            elif key.char == 'k':  # Decrease gripper close percentage by 1%
+                if self.state.hardware.gripper.connected:
+                    current_closure = self.state.hardware.gripper.gripper_closure_percent
+                    new_closure = max(0.0, current_closure - 1.0)  # Floor at 0%
+                    self.state.hardware.gripper.move_to_percentage(new_closure)
+                    print(f"🔧 Gripper closure: {current_closure:.1f}% → {new_closure:.1f}%")
+                else:
+                    print("❌ Gripper not connected")
             
             # --- Speed Control ---
             elif key.char == 'w':
@@ -911,9 +953,9 @@ class GripperControlSystem:
             # --- Gripper Controls ---
             elif key.char == 'o':  # Open gripper fully
                 self.state.hardware.gripper.move_to_percentage(0)
-            elif key.char == 'c':  # Close gripper (adaptive)
+            elif key.char == 'c':  # Close gripper (adaptive) - defaults to 95%
                 if not self.state.hardware.gripper.is_gripping:
-                    self.state.hardware.gripper.move_to_percentage(100)
+                    self.state.hardware.gripper.move_to_percentage(95)
                 else:
                     self.state.hardware.gripper.last_message = "Gripping already in progress"
 
@@ -935,7 +977,7 @@ class GripperControlSystem:
             # --- Data Recording Controls ---
             elif key.char == 'p':  # Stop recording manually
                 if self.state.data_collector.is_recording:
-                    self.state.data_collector.stop_recording()
+                    self.state.data_collector.stop_recording(self.state)
                     print("🛑 Recording stopped manually")
                 else:
                     print("⚠ No recording in progress")

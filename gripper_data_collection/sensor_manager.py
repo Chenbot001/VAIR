@@ -34,7 +34,7 @@ except ImportError:
     print("Warning: minimalmodbus not available. Encoder functions will be disabled.")
 
 # Add paths for local imports
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'daimon', 'dmrobotics'))
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'daimon'))
 
 from config import (
     CONFIG, SINGLE_TURN_RESOLUTION, RECORDING_CONFIG, 

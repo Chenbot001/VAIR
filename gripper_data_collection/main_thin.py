@@ -32,7 +32,7 @@ from utils import get_steps_per_degree
 
 # --- Camera Configuration ---
 # Unique part of your webcam's Device Instance Path:
-TARGET_SERIAL_ID = "19369FC5&0&0000"
+TARGET_SERIAL_ID = "1C8E54EE&0&0000"
 
 # Stabilization parameters (always enabled)
 ANGLE_SMOOTHING_FACTOR = 0.8  # Higher = more smoothing (0.0-1.0)
@@ -644,7 +644,7 @@ class GripperControlSystem:
                         
                         # Overlay angle text on raw image
                         if stabilized_angle is not None:
-                            cv2.putText(frame, f"Angle: {stabilized_angle:.1f}°", (10, 30), 
+                            cv2.putText(frame, f"Angle: {stabilized_angle:.1f} deg", (10, 30), 
                                         cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
                     else:
                         cv2.putText(frame, "No pointer detected", (10, 30), 

@@ -1,11 +1,4 @@
-2025-09-13 06:42:28,945 - INFO - System is Windows
-2025-09-13 06:43:00,157 - INFO - Raw Measurement FPS is: 50.3
-2025-09-13 06:43:00,157 - INFO - Sensor reset!!!!!!!!!!!!!!!!!!
-2025-09-13 06:43:00,159 - INFO - SDK Version: 0.1.0
-2025-09-13 06:43:02,894 - DEBUG - io map size: 78
-2025-09-13 06:46:52,410 - DEBUG - matplotlib data path: C:\Users\ssr\miniconda3\envs\ssr\lib\site-packages\matplotlib\mpl-data
-2025-09-13 06:46:52,429 - DEBUG - CONFIGDIR=C:\Users\ssr\.matplotlib
-2025-09-13 06:46:52,432 - DEBUG - interactive is False
-2025-09-13 06:46:52,432 - DEBUG - platform is win32
-2025-09-13 06:46:52,513 - DEBUG - CACHEDIR=C:\Users\ssr\.matplotlib
-2025-09-13 06:46:52,526 - DEBUG - Using fontManager instance from C:\Users\ssr\.matplotlib\fontlist-v390.json
+2025-09-14 01:07:13,269 - INFO - System is Windows
+2025-09-14 01:07:43,768 - INFO - Raw Measurement FPS is: 51.48
+2025-09-14 01:07:43,769 - INFO - Sensor reset!!!!!!!!!!!!!!!!!!
+2025-09-14 01:07:43,770 - INFO - SDK Version: 0.1.0

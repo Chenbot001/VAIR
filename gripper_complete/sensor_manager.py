@@ -36,7 +36,7 @@ except ImportError:
     print("Warning: Bota sensor dependencies not available. Force sensing disabled.")
 
 # Add paths for local imports
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'daimon', 'dmrobotics'))
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'daimon'))
 
 from config import (
     CONFIG, DISPLAY_CONFIG, ADAPTIVE_GRIPPING_CONFIG, CENTERLINE_CONFIG, SAFETY_CONFIG

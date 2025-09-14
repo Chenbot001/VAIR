@@ -225,6 +225,10 @@ class DataManager:
             bota_data = self._collect_bota_data(system_state)
             snapshot_data["bota"] = bota_data  # Include even if None for consistency
             
+            # 4. UR robot pose data (always include, even if null when robot not connected)
+            ur_robot_data = self._collect_ur_robot_data(system_state)
+            snapshot_data["ur_robot"] = ur_robot_data  # Include even if None for consistency
+            
             # Save snapshot to JSON file
             return self._save_snapshot_json(snapshot_data, current_timestamp, elapsed_time)
             
@@ -418,6 +422,45 @@ class DataManager:
             
         except Exception as e:
             print(f"❌ Error collecting Bota data: {e}")
+            return None
+    
+    def _collect_ur_robot_data(self, system_state) -> Optional[Dict[str, Any]]:
+        """
+        Collect 6-DOF pose data from UR robot (position + orientation)
+        
+        Returns:
+            dict: UR robot pose data with null values if robot not connected, or None if error
+        """
+        try:
+            # Check if UR robot is connected and has current pose data
+            if system_state.hardware.ur_robot.connected and system_state.hardware.ur_robot.current_pose is not None:
+                pose = system_state.hardware.ur_robot.current_pose
+                
+                # UR robot pose format: [x, y, z, rx, ry, rz]
+                # x, y, z are position in meters
+                # rx, ry, rz are rotation vector (axis-angle representation)
+                return {
+                    "position_x_m": round(pose[0], 6),
+                    "position_y_m": round(pose[1], 6),
+                    "position_z_m": round(pose[2], 6),
+                    "rotation_x_rad": round(pose[3], 6),
+                    "rotation_y_rad": round(pose[4], 6),
+                    "rotation_z_rad": round(pose[5], 6)
+                }
+            
+            # Robot not connected or no pose data - return null values
+            else:
+                return {
+                    "position_x_m": None,
+                    "position_y_m": None,
+                    "position_z_m": None,
+                    "rotation_x_rad": None,
+                    "rotation_y_rad": None,
+                    "rotation_z_rad": None
+                }
+            
+        except Exception as e:
+            print(f"❌ Error collecting UR robot data: {e}")
             return None
     
     def _save_snapshot_json(self, snapshot_data: Dict[str, Any], timestamp: float, elapsed_time: float) -> bool:
